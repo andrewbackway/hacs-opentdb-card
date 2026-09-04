@@ -1,5 +1,7 @@
 type QuizConfig = { entity?: string; title?: string };
 type Hass = { states: Record<string, { state: string; attributes: Record<string, unknown> }>; callService: (domain: string, service: string, data: Record<string, unknown>) => Promise<void> };
+type HaForm = HTMLElement & { hass?: Hass; data?: QuizConfig; schema?: unknown[] };
+type ValueChangedEvent = CustomEvent<{ value: QuizConfig }>;
 
 type QuizCard = HTMLElement & { hass?: Hass; config?: QuizConfig };
 
@@ -12,6 +14,7 @@ class OpenTdbCard extends HTMLElement {
   set hass(value: Hass) { this._hass = value; this.render(); }
 
   static getStubConfig() { return { title: "Trivia Quiz" }; }
+  static getConfigElement() { return document.createElement("opentdb-card-editor"); }
 
   private getQuizState() {
     if (!this._hass) return undefined;
@@ -54,6 +57,39 @@ class OpenTdbCard extends HTMLElement {
   }
 }
 
+class OpenTdbCardEditor extends HTMLElement {
+  private _config: QuizConfig = {};
+  private _hass?: Hass;
+
+  setConfig(config: QuizConfig) {
+    this._config = { ...config };
+    this.render();
+  }
+
+  set hass(value: Hass) {
+    this._hass = value;
+    const form = this.querySelector<HaForm>("ha-form");
+    if (form) form.hass = value;
+  }
+
+  private render() {
+    this.innerHTML = "<ha-form></ha-form>";
+    const form = this.querySelector<HaForm>("ha-form")!;
+    form.hass = this._hass;
+    form.data = this._config;
+    form.schema = [
+      { name: "entity", selector: { entity: { domain: "sensor" } } },
+      { name: "title", selector: { text: {} } },
+    ];
+    form.addEventListener("value-changed", (event) => {
+      const value = (event as ValueChangedEvent).detail.value;
+      this._config = value;
+      this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: value } }));
+    });
+  }
+}
+
 customElements.define("opentdb-card", OpenTdbCard);
+customElements.define("opentdb-card-editor", OpenTdbCardEditor);
 (window as unknown as { customCards?: unknown[] }).customCards ||= [];
 (window as unknown as { customCards: unknown[] }).customCards.push({ type: "opentdb-card", name: "Open Trivia Database Quiz", description: "Interactive OpenTDB quiz" });

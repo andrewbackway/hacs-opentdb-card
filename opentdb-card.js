@@ -8,6 +8,7 @@ class OpenTdbCard extends HTMLElement {
     setConfig(config) { this._config = config; this.render(); }
     set hass(value) { this._hass = value; this.render(); }
     static getStubConfig() { return { title: "Trivia Quiz" }; }
+    static getConfigElement() { return document.createElement("opentdb-card-editor"); }
     getQuizState() {
         if (!this._hass)
             return undefined;
@@ -51,6 +52,38 @@ class OpenTdbCard extends HTMLElement {
         });
     }
 }
+class OpenTdbCardEditor extends HTMLElement {
+    constructor() {
+        super(...arguments);
+        this._config = {};
+    }
+    setConfig(config) {
+        this._config = { ...config };
+        this.render();
+    }
+    set hass(value) {
+        this._hass = value;
+        const form = this.querySelector("ha-form");
+        if (form)
+            form.hass = value;
+    }
+    render() {
+        this.innerHTML = "<ha-form></ha-form>";
+        const form = this.querySelector("ha-form");
+        form.hass = this._hass;
+        form.data = this._config;
+        form.schema = [
+            { name: "entity", selector: { entity: { domain: "sensor" } } },
+            { name: "title", selector: { text: {} } },
+        ];
+        form.addEventListener("value-changed", (event) => {
+            const value = event.detail.value;
+            this._config = value;
+            this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: value } }));
+        });
+    }
+}
 customElements.define("opentdb-card", OpenTdbCard);
+customElements.define("opentdb-card-editor", OpenTdbCardEditor);
 (_a = window).customCards || (_a.customCards = []);
 window.customCards.push({ type: "opentdb-card", name: "Open Trivia Database Quiz", description: "Interactive OpenTDB quiz" });
