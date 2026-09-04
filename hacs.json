@@ -1,0 +1,6 @@
+{
+  "name": "Open Trivia Database Card",
+  "filename": "opentdb-card.js",
+  "content_in_root": true,
+  "render_readme": true
+}
