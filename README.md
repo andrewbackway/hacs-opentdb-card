@@ -17,7 +17,17 @@ entity: sensor.trivia_quiz_quiz
 title: Evening trivia
 ```
 
-The `entity` must be the quiz sensor, normally ending in `_quiz`. The card derives the question, score, and elapsed-time entities from that ID. `title` is optional and defaults to the configured quiz name.
+### Configuration
+
+| Option | Required | Description | Default |
+| --- | --- | --- | --- |
+| `type` | Yes | Must be `custom:opentdb-card`. | None |
+| `entity` | Yes | The quiz sensor provided by the Open Trivia Database integration. In the visual editor, only sensors from the `opentdb` integration are offered. The card normally expects this entity ID to end in `_quiz`, then derives the related `_question`, `_score`, and `_elapsed_time` entities. | None |
+| `title` | No | Heading shown at the top of the card. | The quiz sensor's `friendly_name`, then its `quiz_name`, then `Trivia Quiz` |
+
+The related entities are managed by the OpenTDB integration and are not configured separately in the card. If Home Assistant has added a suffix such as `_2` to an entity ID, select the actual quiz sensor belonging to the quiz instance you want to use; do not manually change the derived suffixes.
+
+The card starts a quiz using the integration's `opentdb.start_quiz` service and submits answers as the logged-in Home Assistant user. The OpenTDB integration must be installed, loaded, and up to date for these actions to work.
 
 The card displays the current question and shuffled answers, submits answers for the logged-in Home Assistant user, shows feedback, advances after a short delay, and displays the final percentage and elapsed time.
 
