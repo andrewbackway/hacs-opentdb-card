@@ -1,4 +1,5 @@
-type QuizConfig = { entity?: string; title?: string };
+type QuizConfig = { entity?: string; title?: string; sound?: boolean; shake?: boolean };
+type QuizFeedback = { correct?: boolean; answer?: string; correct_answer?: string; awarded_points?: number; speed_bonus?: number; streak_bonus?: number };
 type Hass = { states: Record<string, { state: string; attributes: Record<string, unknown> }>; callService: (domain: string, service: string, data: Record<string, unknown>) => Promise<void> };
 type HaForm = HTMLElement & { hass?: Hass; data?: QuizConfig; schema?: unknown[] };
 type ValueChangedEvent = CustomEvent<{ value: QuizConfig }>;
@@ -13,6 +14,9 @@ class OpenTdbCard extends HTMLElement {
   private _selectedIndex?: number;
   private _feedbackTimer?: number;
   private _feedbackQuestion?: number;
+  private _cuedQuestion?: number;
+  private _completedCued = false;
+  private _audioCtx?: AudioContext;
 
   setConfig(config: QuizConfig) { this._config = config; this.render(); }
   set hass(value: Hass) { this._hass = value; this.render(); }
@@ -91,14 +95,28 @@ class OpenTdbCard extends HTMLElement {
       footer { color: #b9d7d7; font-size: 14px; font-weight: 700; text-align: right; }
       .shake { animation: opentdb-shake 220ms ease-in-out; }
       @keyframes opentdb-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-7px); } 75% { transform: translateX(7px); } }
+      .leaderboard { display: grid; gap: 6px; width: min(440px, 100%); margin: 4px auto 0; padding: 0; list-style: none; }
+      .leaderboard li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 12px; border-radius: 8px; background: rgba(255, 255, 255, .08); font-size: 15px; font-weight: 700; }
+      .lb-rank { color: var(--opentdb-accent); font-weight: 900; }
+      .lb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+      .lb-points { color: #b9d7d7; white-space: nowrap; }
+      .complete { overflow: auto; }
+      .feedback.correct { animation: opentdb-pop 260ms ease-out; }
+      @keyframes opentdb-pop { 0% { transform: scale(.9); } 50% { transform: scale(1.06); } 100% { transform: scale(1); } }
       :host { --opentdb-card-height: 390px; --opentdb-gap: 12px; --opentdb-answer-min-height: 56px; --opentdb-accent: #ffd06f; --opentdb-primary: #ef715d; --opentdb-correct: #227d70; --opentdb-incorrect: #a64545; }
       @media (max-width: 560px) { .wrap { max-height: none; } .answers { grid-template-columns: 1fr; } header { align-items: start; } .question-copy h2 { font-size: 24px; } }
-      @media (prefers-reduced-motion: reduce) { .shake { animation: none; } }
+      @media (prefers-reduced-motion: reduce) { .shake, .feedback.correct { animation: none; } }
     </style><ha-card><div class="wrap ${stateClass}">
       <header><div class="title-block"><div class="card-name">${safeTitle}</div><div class="quiz-name">${safeQuizName}</div></div>${safeProgress ? `<div class="progress">${safeProgress}</div>` : ""}</header>
       <main>${content}</main>
       <footer>${safeFooter}</footer>
     </div></ha-card>`;
+  }
+
+  private getGame(): Record<string, any> | undefined {
+    const state = this.getQuizState();
+    const game = state?.attributes?.game;
+    return game && typeof game === "object" ? (game as Record<string, any>) : undefined;
   }
 
   private render() {
@@ -113,39 +131,89 @@ class OpenTdbCard extends HTMLElement {
       this.renderShell(`<section class="unavailable"><strong>Quiz unavailable</strong><p>Waiting for the OpenTDB quiz entity.</p></section>`, "state-unavailable", cardName, "Trivia Quiz", "", "");
       return;
     }
-    const attrs = state.attributes;
-    const prefix = entity.replace(/_quiz$/, "");
-    const questionEntity = this._hass!.states[`${prefix}_question`];
-    const scoreEntity = this._hass!.states[`${prefix}_score`];
-    const elapsedEntity = this._hass!.states[`${prefix}_elapsed_time`];
-    const question = questionEntity?.attributes;
-    const score = scoreEntity?.attributes || {};
-    const choices = Array.isArray(question?.answers) ? question.answers.filter((choice): choice is string => typeof choice === "string") : [];
+    const game = this.getGame() || {};
     const quizState = state.state;
-    const feedback = attrs.feedback as { correct?: boolean } | undefined;
-    const quizName = typeof attrs.quiz_name === "string" ? attrs.quiz_name : typeof attrs.friendly_name === "string" ? attrs.friendly_name : "Trivia Quiz";
-    const questionIndex = Number(attrs.question_index);
-    const totalQuestions = Number(attrs.total_questions || 0);
+    const question = (game.question as Record<string, any>) || {};
+    const score = (game.score as Record<string, any>) || {};
+    const feedback = game.feedback as QuizFeedback | undefined;
+    const leaderboard = Array.isArray(game.leaderboard) ? (game.leaderboard as Record<string, any>[]) : [];
+    const choices = Array.isArray(question.answers) ? (question.answers as unknown[]).filter((choice): choice is string => typeof choice === "string") : [];
+    const quizName = typeof game.quiz_name === "string" ? game.quiz_name : "Trivia Quiz";
+    const questionIndex = Number(game.question_index);
+    const totalQuestions = Number(game.total_questions || 0);
+    const elapsed = Number(game.elapsed_seconds || 0);
+    const points = Number(score.points || 0);
+    const streak = Number(score.streak || 0);
+
     if (!feedback && !this._submitting) {
       this.clearFeedbackTimer();
       this._selectedIndex = undefined;
+      this._cuedQuestion = undefined;
     }
-    const footer = quizState === "idle" || quizState === "complete" ? "" : `Score: ${score.correct || 0} / ${score.answered || 0}`;
+
+    this.maybeCue(feedback, questionIndex, quizState);
+
+    const footer = quizState === "idle" || quizState === "complete" ? "" : `${points} pts${streak > 1 ? `  \u00b7  ${streak}x streak` : ""}  \u00b7  ${score.correct || 0}/${score.answered || 0}`;
     const progress = quizState === "idle" || quizState === "complete" || !Number.isFinite(questionIndex) || questionIndex < 0 || totalQuestions <= 0 ? "" : `Question ${questionIndex + 1} of ${totalQuestions}`;
-    const content = quizState === "idle" ? `<section class="empty"><strong>Ready when you are</strong><button class="primary" data-action="start">Start quiz</button></section>` : quizState === "complete" ? `<section class="complete"><strong>Quiz complete</strong><div class="result">${this.escapeHtml(score.percentage || 0)}%</div><div class="result-detail">${this.escapeHtml(score.correct || 0)} of ${this.escapeHtml(score.answered || 0)} correct, ${this.escapeHtml(elapsedEntity?.state || 0)}s</div><button class="primary" data-action="start">New quiz</button></section>` : `<section class="question-region${feedback?.correct === false ? " shake" : ""}" aria-busy="${this._submitting ? "true" : "false"}"><div class="question-copy"><h2>${this.escapeHtml(typeof question?.question === "string" ? question.question : "Waiting for the next question...")}</h2></div><div class="answers" role="group" aria-label="Answer choices">${choices.map((choice, index) => {
-      const selected = this._selectedIndex === index;
-      const correctAnswer = typeof question?.correct_answer === "string" && choice === question.correct_answer;
-      const correct = feedback && selected && feedback.correct;
-      const incorrect = feedback && selected && !feedback.correct;
-      const icon = correct || correctAnswer ? "mdi:check-circle" : incorrect ? "mdi:close-circle" : "mdi:circle-outline";
-      const stateClass = correct ? " answer-selected answer-correct" : incorrect ? " answer-selected answer-incorrect" : correctAnswer && feedback ? " answer-revealed-correct" : "";
-      const label = `${String.fromCharCode(65 + index)}. ${choice}${correctAnswer && feedback ? ", correct answer" : ""}`;
-      return `<button class="answer${stateClass}" data-answer-index="${index}" aria-label="${this.escapeHtml(label)}" aria-pressed="${selected ? "true" : "false"}" ${this._submitting || feedback ? "disabled" : ""}><span class="answer-marker">${String.fromCharCode(65 + index)}</span><span class="answer-label">${this.escapeHtml(choice)}</span><ha-icon class="answer-icon" icon="${icon}"></ha-icon></button>`;
-    }).join("")}</div>${feedback ? `<div class="feedback ${feedback.correct ? "correct" : "incorrect"}" role="status" aria-live="polite"><ha-icon icon="${feedback.correct ? "mdi:check-circle" : "mdi:close-circle"}"></ha-icon>${feedback.correct ? "Correct" : "Incorrect"}${feedback.correct ? "" : " - correct answer revealed"}</div>` : this._serviceError ? `<div class="feedback service-error" role="status" aria-live="polite">${this.escapeHtml(this._serviceError)}</div>` : ""}</section>`;
+
+    const content = quizState === "idle"
+      ? `<section class="empty"><strong>Ready when you are</strong><button class="primary" data-action="start">Start quiz</button></section>`
+      : quizState === "complete"
+        ? this.renderComplete(score, elapsed, leaderboard)
+        : this.renderQuestion(question, choices, feedback);
+
     this.renderShell(content, feedback ? "state-feedback" : quizState === "idle" ? "state-idle" : quizState === "complete" ? "state-complete" : "state-question", cardName, quizName, progress, footer);
-    this.querySelectorAll<HTMLElement>("[data-action='start']").forEach(button => button.onclick = () => this.service("start_quiz"));
-    this.querySelectorAll<HTMLButtonElement>("[data-answer-index]").forEach(button => button.onclick = () => {
+    this.wireEvents(choices, questionIndex, feedback);
+
+    if (feedback && this._feedbackQuestion !== questionIndex && Number.isFinite(questionIndex)) {
+      this._submitting = false;
+      this.clearFeedbackTimer();
+      this._feedbackQuestion = questionIndex;
+      this._feedbackTimer = window.setTimeout(() => {
+        this._feedbackTimer = undefined;
+        if (!this.isConnected) return;
+        void this.service("next_question");
+      }, 1300);
+    }
+  }
+
+  private renderQuestion(question: Record<string, any>, choices: string[], feedback?: QuizFeedback) {
+    const correctText = typeof feedback?.correct_answer === "string" ? feedback.correct_answer : undefined;
+    const selectedIndex = this._selectedIndex ?? (feedback ? choices.findIndex((choice) => choice === feedback.answer) : -1);
+    const shake = feedback && !feedback.correct && this._config.shake !== false ? " shake" : "";
+    const questionText = typeof question.question === "string" ? question.question : "Waiting for the next question...";
+    const answers = choices.map((choice, index) => {
+      const selected = index === selectedIndex;
+      const isCorrectAnswer = correctText !== undefined && choice === correctText;
+      const correct = !!feedback && selected && !!feedback.correct;
+      const incorrect = !!feedback && selected && !feedback.correct;
+      const marker = String.fromCharCode(65 + index);
+      const icon = correct || isCorrectAnswer ? "mdi:check-circle" : incorrect ? "mdi:close-circle" : "mdi:circle-outline";
+      const stateClass = correct ? " answer-selected answer-correct" : incorrect ? " answer-selected answer-incorrect" : isCorrectAnswer && feedback ? " answer-revealed-correct" : "";
+      const label = `${marker}. ${choice}${isCorrectAnswer && feedback ? ", correct answer" : ""}`;
+      return `<button class="answer${stateClass}" data-answer-index="${index}" aria-label="${this.escapeHtml(label)}" aria-pressed="${selected ? "true" : "false"}" ${this._submitting || feedback ? "disabled" : ""}><span class="answer-marker">${marker}</span><span class="answer-label">${this.escapeHtml(choice)}</span><ha-icon class="answer-icon" icon="${icon}"></ha-icon></button>`;
+    }).join("");
+    const banner = feedback
+      ? `<div class="feedback ${feedback.correct ? "correct" : "incorrect"}" role="status" aria-live="polite"><ha-icon icon="${feedback.correct ? "mdi:check-circle" : "mdi:close-circle"}"></ha-icon>${feedback.correct ? `Correct  +${this.escapeHtml(feedback.awarded_points ?? 0)}` : "Incorrect"}</div>`
+      : this._serviceError
+        ? `<div class="feedback service-error" role="status" aria-live="polite">${this.escapeHtml(this._serviceError)}</div>`
+        : "";
+    return `<section class="question-region${shake}" aria-busy="${this._submitting ? "true" : "false"}"><div class="question-copy"><h2>${this.escapeHtml(questionText)}</h2></div><div class="answers" role="group" aria-label="Answer choices">${answers}</div>${banner}</section>`;
+  }
+
+  private renderComplete(score: Record<string, any>, elapsed: number, leaderboard: Record<string, any>[]) {
+    const board = leaderboard.length
+      ? `<ol class="leaderboard" aria-label="Leaderboard">${leaderboard.slice(0, 5).map((row, index) => `<li><span class="lb-rank">${index + 1}</span><span class="lb-name">${this.escapeHtml(row.name ?? "Player")}</span><span class="lb-points">${this.escapeHtml(row.points_today ?? 0)} pts</span></li>`).join("")}</ol>`
+      : "";
+    return `<section class="complete"><strong>Quiz complete</strong><div class="result">${this.escapeHtml(score.percentage || 0)}%</div><div class="result-detail">${this.escapeHtml(score.correct || 0)} of ${this.escapeHtml(score.answered || 0)} correct \u00b7 ${this.escapeHtml(score.points || 0)} pts \u00b7 ${this.escapeHtml(elapsed)}s</div>${board}<button class="primary" data-action="new">New quiz</button></section>`;
+  }
+
+  private wireEvents(choices: string[], questionIndex: number, feedback?: QuizFeedback) {
+    this.querySelectorAll<HTMLElement>("[data-action='start']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.service("start_quiz"); });
+    this.querySelectorAll<HTMLElement>("[data-action='new']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.service("new_quiz"); });
+    this.querySelectorAll<HTMLButtonElement>("[data-answer-index]").forEach((button) => button.onclick = () => {
       if (this._submitting || feedback) return;
+      this.unlockAudio();
       const answerIndex = Number(button.dataset.answerIndex);
       const answer = choices[answerIndex];
       if (!Number.isInteger(answerIndex) || answer === undefined) return;
@@ -159,16 +227,66 @@ class OpenTdbCard extends HTMLElement {
         this.render();
       });
     });
-    if (feedback && this._feedbackQuestion !== questionIndex && Number.isFinite(questionIndex)) {
-      this._submitting = false;
-      this.clearFeedbackTimer();
-      this._feedbackQuestion = questionIndex;
-      this._feedbackTimer = window.setTimeout(() => {
-        this._feedbackTimer = undefined;
-        void this.service("next_question");
-      }, 900);
+  }
+
+  private maybeCue(feedback: QuizFeedback | undefined, questionIndex: number, quizState: string) {
+    if (quizState === "complete") {
+      if (!this._completedCued) {
+        this._completedCued = true;
+        if (this._config.sound !== false) this.playFanfare();
+      }
+      return;
+    }
+    this._completedCued = false;
+    if (!feedback || this._cuedQuestion === questionIndex) return;
+    this._cuedQuestion = questionIndex;
+    if (this._config.sound === false) return;
+    if (feedback.correct) this.playChime(); else this.playBuzzer();
+  }
+
+  private unlockAudio() {
+    if (this._config.sound === false) return;
+    try {
+      if (!this._audioCtx) {
+        const Ctx = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+          || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (Ctx) this._audioCtx = new Ctx();
+      }
+      if (this._audioCtx?.state === "suspended") void this._audioCtx.resume();
+    } catch {
+      /* audio is best-effort */
     }
   }
+
+  private tone(freq: number, startOffset: number, duration: number, type: OscillatorType, peak: number) {
+    const ctx = this._audioCtx;
+    if (!ctx) return;
+    const t0 = ctx.currentTime + startOffset;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    gain.gain.setValueAtTime(0.0001, t0);
+    gain.gain.linearRampToValueAtTime(peak, t0 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + duration + 0.03);
+  }
+
+  private playChime() {
+    [523.25, 659.25, 783.99, 1046.5].forEach((freq, index) => this.tone(freq, index * 0.08, 0.25, "sine", 0.18));
+  }
+
+  private playBuzzer() {
+    this.tone(150, 0, 0.42, "sawtooth", 0.2);
+    this.tone(146, 0, 0.42, "square", 0.12);
+  }
+
+  private playFanfare() {
+    [523.25, 659.25, 783.99, 1046.5, 1318.5].forEach((freq, index) => this.tone(freq, index * 0.12, 0.32, "triangle", 0.16));
+  }
+
 }
 
 class OpenTdbCardEditor extends HTMLElement {
@@ -194,6 +312,8 @@ class OpenTdbCardEditor extends HTMLElement {
     form.schema = [
       { name: "entity", selector: { entity: { domain: "sensor", integration: "opentdb" } } },
       { name: "title", selector: { text: {} } },
+      { name: "sound", selector: { boolean: {} } },
+      { name: "shake", selector: { boolean: {} } },
     ];
     form.addEventListener("value-changed", (event) => {
       const value = (event as ValueChangedEvent).detail.value;
