@@ -4,11 +4,27 @@ class OpenTdbCard extends HTMLElement {
     constructor() {
         super(...arguments);
         this._config = {};
+        this._submitting = false;
     }
     setConfig(config) { this._config = config; this.render(); }
     set hass(value) { this._hass = value; this.render(); }
+    disconnectedCallback() {
+        this.clearFeedbackTimer();
+    }
     static getStubConfig() { return { title: "Trivia Quiz" }; }
     static getConfigElement() { return document.createElement("opentdb-card-editor"); }
+    escapeHtml(value) {
+        return String(value ?? "").replace(/[&<>'"]/g, (character) => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+        })[character]);
+    }
+    clearFeedbackTimer() {
+        if (this._feedbackTimer !== undefined) {
+            window.clearTimeout(this._feedbackTimer);
+            this._feedbackTimer = undefined;
+            this._feedbackQuestion = undefined;
+        }
+    }
     getQuizState() {
         if (!this._hass)
             return undefined;
@@ -21,11 +37,66 @@ class OpenTdbCard extends HTMLElement {
             return;
         await this._hass.callService("opentdb", service, { ...data, entity_id: entity });
     }
+    renderShell(content, stateClass, title, quizName, progress = "", footer = "") {
+        const safeTitle = this.escapeHtml(title);
+        const safeQuizName = this.escapeHtml(quizName);
+        const safeProgress = this.escapeHtml(progress);
+        const safeFooter = this.escapeHtml(footer);
+        this.innerHTML = `<style>
+      :host { display: block; color: var(--primary-text-color, #f7fbfc); }
+      ha-card { overflow: hidden; background: var(--card-background-color, #10252b); border: 1px solid rgba(255, 255, 255, .12); border-radius: 8px; }
+      .wrap { box-sizing: border-box; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: var(--opentdb-gap); min-height: 260px; max-height: var(--opentdb-card-height); padding: 20px; overflow: hidden; background: radial-gradient(circle at 100% 0, rgba(255, 190, 92, .2), transparent 34%), linear-gradient(135deg, #10252b 0%, #123b43 58%, #0c252d 100%); font-family: var(--paper-font-body1_-_font-family, sans-serif); }
+      header { display: flex; align-items: end; justify-content: space-between; gap: 16px; min-width: 0; border-bottom: 1px solid rgba(255, 255, 255, .2); padding-bottom: 12px; }
+      .title-block { min-width: 0; }
+      .card-name { overflow: hidden; color: var(--opentdb-accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+      .quiz-name { display: -webkit-box; overflow: hidden; margin-top: 3px; font-size: 26px; font-weight: 800; line-height: 1.08; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+      .progress { flex: 0 0 auto; color: #b9d7d7; font-size: 14px; font-weight: 700; white-space: nowrap; }
+      main { min-height: 0; }
+      .question-region { display: grid; align-content: start; gap: var(--opentdb-gap); min-height: 0; overflow: auto; overscroll-behavior: contain; }
+      .question-copy h2 { margin: 0; max-width: 34em; font-size: 28px; line-height: 1.18; }
+      .answers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      button { display: grid; grid-template-columns: 30px minmax(0, 1fr) 24px; align-items: center; min-height: var(--opentdb-answer-min-height); border: 1px solid rgba(255, 255, 255, .24); border-radius: 8px; padding: 12px 14px; color: #f7fbfc; background: rgba(255, 255, 255, .1); font: inherit; font-size: 17px; font-weight: 700; line-height: 1.18; text-align: left; cursor: pointer; }
+      button:hover, button:focus-visible { border-color: var(--opentdb-accent); background: rgba(255, 208, 111, .2); outline: 3px solid rgba(255, 208, 111, .35); outline-offset: 2px; }
+      button:disabled { cursor: default; opacity: .78; }
+      .answer-marker { color: var(--opentdb-accent); font-size: 14px; font-weight: 900; }
+      .answer-label { min-width: 0; overflow-wrap: anywhere; }
+      .answer-icon { justify-self: end; opacity: 0; }
+      .answer-selected .answer-icon, .answer-revealed-correct .answer-icon { opacity: 1; }
+      .answer-correct { border-color: #78e0b0; background: rgba(34, 125, 112, .72); }
+      .answer-incorrect { border-color: #ff9a7f; background: rgba(166, 69, 69, .78); }
+      .answer-revealed-correct { border-color: #78e0b0; background: rgba(34, 125, 112, .5); }
+      .primary { justify-self: center; grid-template-columns: 1fr; min-width: min(260px, 100%); background: var(--opentdb-primary); border-color: #ff9a7f; text-align: center; }
+      .primary:hover, .primary:focus-visible { background: #ff866d; }
+      .feedback { display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; padding: 10px 14px; color: #fff; font-size: 18px; font-weight: 800; text-align: center; }
+      .feedback.correct { background: var(--opentdb-correct); }
+      .feedback.incorrect, .service-error { background: var(--opentdb-incorrect); }
+      .complete, .empty, .unavailable { display: grid; justify-items: center; align-content: center; gap: 10px; min-height: 0; padding: 18px 0; text-align: center; }
+      .complete strong, .empty strong { color: var(--opentdb-accent); font-size: 22px; }
+      .result { color: #fff; font-size: 64px; font-weight: 900; line-height: 1; }
+      .result-detail, .unavailable p { color: #b9d7d7; font-size: 16px; }
+      .service-error { border-radius: 8px; padding: 10px 14px; color: #fff; font-weight: 700; }
+      footer { color: #b9d7d7; font-size: 14px; font-weight: 700; text-align: right; }
+      .shake { animation: opentdb-shake 220ms ease-in-out; }
+      @keyframes opentdb-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-7px); } 75% { transform: translateX(7px); } }
+      :host { --opentdb-card-height: 390px; --opentdb-gap: 12px; --opentdb-answer-min-height: 56px; --opentdb-accent: #ffd06f; --opentdb-primary: #ef715d; --opentdb-correct: #227d70; --opentdb-incorrect: #a64545; }
+      @media (max-width: 560px) { .wrap { max-height: none; } .answers { grid-template-columns: 1fr; } header { align-items: start; } .question-copy h2 { font-size: 24px; } }
+      @media (prefers-reduced-motion: reduce) { .shake { animation: none; } }
+    </style><ha-card><div class="wrap ${stateClass}">
+      <header><div class="title-block"><div class="card-name">${safeTitle}</div><div class="quiz-name">${safeQuizName}</div></div>${safeProgress ? `<div class="progress">${safeProgress}</div>` : ""}</header>
+      <main>${content}</main>
+      <footer>${safeFooter}</footer>
+    </div></ha-card>`;
+    }
     render() {
         const entity = this._config.entity;
         const state = this.getQuizState();
-        if (!state || !entity) {
-            this.innerHTML = `<ha-card><div class="empty">Choose an OpenTDB quiz entity.</div></ha-card>`;
+        const cardName = this._config.title || "Open Trivia DB Quiz";
+        if (!entity) {
+            this.renderShell(`<section class="empty"><strong>Choose a quiz to begin</strong><div class="result-detail">Select an OpenTDB quiz entity in the card configuration.</div></section>`, "state-unconfigured", cardName, "Trivia Quiz", "", "");
+            return;
+        }
+        if (!state || state.state === "unavailable" || state.state === "unknown") {
+            this.renderShell(`<section class="unavailable"><strong>Quiz unavailable</strong><p>Waiting for the OpenTDB quiz entity.</p></section>`, "state-unavailable", cardName, "Trivia Quiz", "", "");
             return;
         }
         const attrs = state.attributes;
@@ -35,49 +106,56 @@ class OpenTdbCard extends HTMLElement {
         const elapsedEntity = this._hass.states[`${prefix}_elapsed_time`];
         const question = questionEntity?.attributes;
         const score = scoreEntity?.attributes || {};
-        const choices = Array.isArray(question?.answers) ? question.answers : [];
+        const choices = Array.isArray(question?.answers) ? question.answers.filter((choice) => typeof choice === "string") : [];
         const quizState = state.state;
         const feedback = attrs.feedback;
-        const cardName = this._config.title || "OpenTDB Quiz";
-        const quizName = attrs.quiz_name || attrs.friendly_name || "Trivia Quiz";
-        const questionNumber = Number(attrs.question_index || 0) + 1;
+        const quizName = typeof attrs.quiz_name === "string" ? attrs.quiz_name : typeof attrs.friendly_name === "string" ? attrs.friendly_name : "Trivia Quiz";
+        const questionIndex = Number(attrs.question_index);
         const totalQuestions = Number(attrs.total_questions || 0);
-        this.innerHTML = `<style>
-      :host { display: block; color: var(--primary-text-color, #f7fbfc); }
-      ha-card { overflow: hidden; background: var(--card-background-color, #10252b); border: 1px solid rgba(255, 255, 255, .12); border-radius: 18px; }
-      .wrap { box-sizing: border-box; display: grid; gap: 14px; min-height: 260px; max-height: 460px; padding: clamp(16px, 3vw, 28px); overflow: auto; background: radial-gradient(circle at 100% 0, rgba(255, 190, 92, .2), transparent 34%), linear-gradient(135deg, #10252b 0%, #123b43 58%, #0c252d 100%); font-family: var(--paper-font-body1_-_font-family, sans-serif); }
-      header { display: flex; align-items: end; justify-content: space-between; gap: 16px; border-bottom: 1px solid rgba(255, 255, 255, .2); padding-bottom: 12px; }
-      .card-name { color: #ffd06f; font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
-      .quiz-name { margin-top: 3px; font-size: clamp(20px, 3vw, 30px); font-weight: 800; line-height: 1.08; }
-      .progress { flex: 0 0 auto; color: #b9d7d7; font-size: 14px; font-weight: 700; white-space: nowrap; }
-      .question { display: grid; gap: 14px; }
-      h2 { margin: 0; max-width: 34em; font-size: clamp(20px, 3vw, 30px); line-height: 1.18; text-wrap: balance; }
-      .answers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-      button { min-height: 58px; border: 1px solid rgba(255, 255, 255, .24); border-radius: 12px; padding: 12px 16px; color: #f7fbfc; background: rgba(255, 255, 255, .1); font: inherit; font-size: 16px; font-weight: 700; line-height: 1.18; text-align: left; cursor: pointer; }
-      button:hover, button:focus-visible { border-color: #ffd06f; background: rgba(255, 208, 111, .2); outline: 3px solid rgba(255, 208, 111, .35); outline-offset: 2px; }
-      button:disabled { cursor: default; opacity: .7; }
-      .primary { justify-self: center; min-width: min(260px, 100%); background: #ef715d; border-color: #ff9a7f; text-align: center; }
-      .primary:hover, .primary:focus-visible { background: #ff866d; }
-      .feedback { border-radius: 10px; padding: 10px 14px; background: #227d70; color: #fff; font-size: 18px; font-weight: 800; text-align: center; }
-      .feedback.incorrect { background: #a64545; }
-      .complete, .empty { display: grid; justify-items: center; gap: 10px; padding: 18px 0; text-align: center; }
-      .complete strong { color: #ffd06f; font-size: 22px; }
-      .result { color: #fff; font-size: clamp(48px, 8vw, 76px); font-weight: 900; line-height: 1; }
-      .result-detail { color: #b9d7d7; font-size: 16px; }
-      footer { color: #b9d7d7; font-size: 14px; font-weight: 700; text-align: right; }
-      @media (max-width: 560px) { .wrap { max-height: none; } .answers { grid-template-columns: 1fr; } header { align-items: start; } }
-    </style><ha-card><div class="wrap">
-      <header><div><div class="card-name">${cardName}</div><div class="quiz-name">${quizName}</div></div><span class="progress">${questionNumber} / ${totalQuestions}</span></header>
-      ${quizState === "idle" ? `<section class="empty"><strong>Ready when you are</strong><button class="primary" data-action="start">Start quiz</button></section>` : quizState === "complete" ? `<section class="complete"><strong>Quiz complete</strong><div class="result">${score.percentage || 0}%</div><div class="result-detail">${score.correct || 0} of ${score.answered || 0} correct · ${elapsedEntity?.state || 0}s</div><button class="primary" data-action="start">New quiz</button></section>` : `<section class="question"><h2>${question?.question || "Waiting for the next question..."}</h2><div class="answers">${choices.map((choice, index) => `<button data-answer="${index}" ${feedback ? "disabled" : ""}>${choice}</button>`).join("")}</div>${feedback ? `<div class="feedback${feedback.correct ? "" : " incorrect"}" role="status">${feedback.correct ? "Correct" : "Incorrect"}</div>` : ""}</section>`}
-      <footer>Score: ${score.correct || 0} / ${score.answered || 0}</footer></div></ha-card>`;
+        if (!feedback && !this._submitting) {
+            this.clearFeedbackTimer();
+            this._selectedIndex = undefined;
+        }
+        const footer = quizState === "idle" || quizState === "complete" ? "" : `Score: ${score.correct || 0} / ${score.answered || 0}`;
+        const progress = quizState === "idle" || quizState === "complete" || !Number.isFinite(questionIndex) || questionIndex < 0 || totalQuestions <= 0 ? "" : `Question ${questionIndex + 1} of ${totalQuestions}`;
+        const content = quizState === "idle" ? `<section class="empty"><strong>Ready when you are</strong><button class="primary" data-action="start">Start quiz</button></section>` : quizState === "complete" ? `<section class="complete"><strong>Quiz complete</strong><div class="result">${this.escapeHtml(score.percentage || 0)}%</div><div class="result-detail">${this.escapeHtml(score.correct || 0)} of ${this.escapeHtml(score.answered || 0)} correct, ${this.escapeHtml(elapsedEntity?.state || 0)}s</div><button class="primary" data-action="start">New quiz</button></section>` : `<section class="question-region${feedback?.correct === false ? " shake" : ""}" aria-busy="${this._submitting ? "true" : "false"}"><div class="question-copy"><h2>${this.escapeHtml(typeof question?.question === "string" ? question.question : "Waiting for the next question...")}</h2></div><div class="answers" role="group" aria-label="Answer choices">${choices.map((choice, index) => {
+            const selected = this._selectedIndex === index;
+            const correctAnswer = typeof question?.correct_answer === "string" && choice === question.correct_answer;
+            const correct = feedback && selected && feedback.correct;
+            const incorrect = feedback && selected && !feedback.correct;
+            const icon = correct || correctAnswer ? "mdi:check-circle" : incorrect ? "mdi:close-circle" : "mdi:circle-outline";
+            const stateClass = correct ? " answer-selected answer-correct" : incorrect ? " answer-selected answer-incorrect" : correctAnswer && feedback ? " answer-revealed-correct" : "";
+            const label = `${String.fromCharCode(65 + index)}. ${choice}${correctAnswer && feedback ? ", correct answer" : ""}`;
+            return `<button class="answer${stateClass}" data-answer-index="${index}" aria-label="${this.escapeHtml(label)}" aria-pressed="${selected ? "true" : "false"}" ${this._submitting || feedback ? "disabled" : ""}><span class="answer-marker">${String.fromCharCode(65 + index)}</span><span class="answer-label">${this.escapeHtml(choice)}</span><ha-icon class="answer-icon" icon="${icon}"></ha-icon></button>`;
+        }).join("")}</div>${feedback ? `<div class="feedback ${feedback.correct ? "correct" : "incorrect"}" role="status" aria-live="polite"><ha-icon icon="${feedback.correct ? "mdi:check-circle" : "mdi:close-circle"}"></ha-icon>${feedback.correct ? "Correct" : "Incorrect"}${feedback.correct ? "" : " - correct answer revealed"}</div>` : this._serviceError ? `<div class="feedback service-error" role="status" aria-live="polite">${this.escapeHtml(this._serviceError)}</div>` : ""}</section>`;
+        this.renderShell(content, feedback ? "state-feedback" : quizState === "idle" ? "state-idle" : quizState === "complete" ? "state-complete" : "state-question", cardName, quizName, progress, footer);
         this.querySelectorAll("[data-action='start']").forEach(button => button.onclick = () => this.service("start_quiz"));
-        this.querySelectorAll("[data-answer]").forEach(button => button.onclick = () => {
-            const index = Number(attrs.question_index || 0);
-            const answer = choices[Number(button.dataset.answer)];
-            void this.service("submit_answer", { question_index: index, answer }).then(() => {
-                this._feedbackTimer = window.setTimeout(() => void this.service("next_question"), 900);
+        this.querySelectorAll("[data-answer-index]").forEach(button => button.onclick = () => {
+            if (this._submitting || feedback)
+                return;
+            const answerIndex = Number(button.dataset.answerIndex);
+            const answer = choices[answerIndex];
+            if (!Number.isInteger(answerIndex) || answer === undefined)
+                return;
+            this._submitting = true;
+            this._selectedIndex = answerIndex;
+            this._serviceError = undefined;
+            this.render();
+            void this.service("submit_answer", { question_index: Number.isFinite(questionIndex) ? questionIndex : 0, answer }).catch(() => {
+                this._submitting = false;
+                this._serviceError = "Couldn't submit that answer. Try again.";
+                this.render();
             });
         });
+        if (feedback && this._feedbackQuestion !== questionIndex && Number.isFinite(questionIndex)) {
+            this._submitting = false;
+            this.clearFeedbackTimer();
+            this._feedbackQuestion = questionIndex;
+            this._feedbackTimer = window.setTimeout(() => {
+                this._feedbackTimer = undefined;
+                void this.service("next_question");
+            }, 900);
+        }
     }
 }
 class OpenTdbCardEditor extends HTMLElement {
