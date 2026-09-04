@@ -12,8 +12,9 @@ param(
 $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $PackagePath = Join-Path $RepoRoot "package.json"
-$CardPath = Join-Path $RepoRoot "dist/opentdb-card.js"
-foreach ($path in @($PackagePath, $CardPath)) {
+$SourcePath = Join-Path $RepoRoot "src/opentdb-card.ts"
+$CardPath = Join-Path $RepoRoot "opentdb-card.js"
+foreach ($path in @($PackagePath, $SourcePath)) {
     if (-not (Test-Path $path)) { throw "Required file not found: $path" }
 }
 
@@ -30,10 +31,10 @@ if ($Version) {
 if ($new -eq $current) { throw "New version matches current version" }
 $dirty = git -C $RepoRoot status --porcelain
 if ($dirty) { throw "Working tree is not clean:`n$dirty" }
-$package.version = $new
-$package | ConvertTo-Json | Set-Content $PackagePath
+npm --prefix $RepoRoot version $new --no-git-tag-version
 npm --prefix $RepoRoot run build
-git -C $RepoRoot add package.json dist/opentdb-card.js
+if (-not (Test-Path $CardPath)) { throw "Build did not produce required file: $CardPath" }
+git -C $RepoRoot add package.json opentdb-card.js
 $tag = "v$new"
 git -C $RepoRoot commit -m "Release $tag"
 git -C $RepoRoot tag $tag

@@ -25,4 +25,4 @@ npm ci
 npm run build
 ```
 
-The compiled card is written to `dist/opentdb-card.js`. HACS installs that file at the repository root because `hacs.json` sets `content_in_root` and `filename`.
+The compiled card is written to `opentdb-card.js`, which is the root-level file HACS expects from `hacs.json`.
