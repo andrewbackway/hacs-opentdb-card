@@ -22,7 +22,7 @@ title: Evening trivia
 | Option | Required | Description | Default |
 | --- | --- | --- | --- |
 | `type` | Yes | Must be `custom:opentdb-card`. | None |
-| `quiz_id` | Yes | Stable quiz identifier provided by the Open Trivia Database integration. | None |
+| `quiz_id` | Yes | Select the OpenTDB quiz in the Home Assistant entity picker. The selected quiz entity ID is used as the integration's quiz identifier; the card does not read its sensor state. | None |
 | `title` | No | Heading shown at the top of the card. | `Open Trivia DB Quiz` |
 | `sound` | No | Play WebAudio sound effects (buzzer, chime, fanfare). | `true` |
 | `shake` | No | Shake the question on a wrong answer. Always disabled when the browser requests reduced motion. | `true` |

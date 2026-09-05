@@ -1,8 +1,8 @@
 # OpenTDB Integration and Card Contract
 
-The card uses a stable `quiz_id` and an authenticated Home Assistant WebSocket
-session. It does not read a quiz sensor or shared entity attributes for runtime
-quiz state.
+The card uses a selected OpenTDB quiz entity as its `quiz_id` and an
+authenticated Home Assistant WebSocket session. It does not read the selected
+sensor or shared entity attributes for runtime quiz state.
 
 ## Session Commands
 

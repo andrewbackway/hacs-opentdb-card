@@ -348,7 +348,7 @@ class OpenTdbCardEditor extends HTMLElement {
         const form = this.querySelector("ha-form");
         form.hass = this._hass;
         form.schema = [
-            { name: "quiz_id", selector: { text: {} } },
+            { name: "quiz_id", selector: { entity: { domain: "sensor", integration: "opentdb" } } },
             { name: "title", selector: { text: {} } },
             { name: "sound", selector: { boolean: {} } },
             { name: "shake", selector: { boolean: {} } },
