@@ -3,7 +3,7 @@ type QuizFeedback = { correct?: boolean; answer?: string; correct_answer?: strin
 type QuizQuestion = { question?: string; answers?: string[]; category?: string; type?: string; difficulty?: string };
 type QuizScore = { answered?: number; correct?: number; incorrect?: number; percentage?: number; points?: number; streak?: number; best_streak?: number };
 type QuizSession = { session_id: string; set_id?: string; quiz_name?: string; question_index: number; total_questions: number; question?: QuizQuestion; feedback?: QuizFeedback; score?: QuizScore; elapsed_seconds?: number; complete?: boolean; leaderboard?: Record<string, any>[] };
-type Hass = { callWS: <T>(message: Record<string, unknown>) => Promise<T> };
+type Hass = { callWS: <T>(message: Record<string, unknown>) => Promise<T>; callService: (domain: string, service: string, serviceData?: Record<string, unknown>, target?: Record<string, unknown>) => Promise<unknown> };
 type HaForm = HTMLElement & { hass?: Hass; data?: QuizConfig; schema?: unknown[] };
 type ValueChangedEvent = CustomEvent<{ value: QuizConfig }>;
 
@@ -21,6 +21,7 @@ class OpenTdbCard extends HTMLElement {
   private _feedbackQuestion?: number;
   private _cuedQuestion?: number;
   private _completedCued = false;
+  private _narratedQuestion?: number;
   private _sessionError?: string;
   private _audioCtx?: AudioContext;
 
@@ -32,14 +33,16 @@ class OpenTdbCard extends HTMLElement {
   }
 
   set hass(value: Hass) {
-    const wasUnset = !this._hass;
+    const changed = this._hass !== value;
     this._hass = value;
-    if (wasUnset) void this.startSession();
+    if (changed) void this.startSession();
+    this.render();
   }
 
   disconnectedCallback() {
     this.clearFeedbackTimer();
     this._sessionRequest++;
+    this._narratedQuestion = undefined;
   }
 
   static getStubConfig() { return { title: "Trivia Quiz" }; }
@@ -69,6 +72,7 @@ class OpenTdbCard extends HTMLElement {
     const request = ++this._sessionRequest;
     this._session = undefined;
     this._sessionError = undefined;
+    this._narratedQuestion = undefined;
     this.render();
     try {
       const session = await this.sessionRequest<QuizSession>(command);
@@ -131,6 +135,9 @@ class OpenTdbCard extends HTMLElement {
       .lb-rank { color: var(--opentdb-accent); font-weight: 900; }
       .lb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
       .lb-points { color: #b9d7d7; white-space: nowrap; }
+      .question-heading { display: flex; align-items: start; gap: 10px; }
+      .question-heading h2 { flex: 1 1 auto; min-width: 0; }
+      .replay { flex: 0 0 auto; grid-template-columns: 1fr; min-width: 44px; min-height: 44px; padding: 8px; text-align: center; }
       .complete { overflow: auto; }
       .feedback.correct { animation: opentdb-pop 260ms ease-out; }
       @keyframes opentdb-pop { 0% { transform: scale(.9); } 50% { transform: scale(1.06); } 100% { transform: scale(1); } }
@@ -176,7 +183,7 @@ class OpenTdbCard extends HTMLElement {
       this._cuedQuestion = undefined;
     }
 
-    this.maybeCue(feedback, questionIndex, quizState);
+    this.maybeCue(feedback, questionIndex, quizState, question, choices);
 
     const footer = quizState === "idle" || quizState === "complete" ? "" : `${points} pts${streak > 1 ? `  \u00b7  ${streak}x streak` : ""}  \u00b7  ${score.correct || 0}/${score.answered || 0}`;
     const progress = quizState === "idle" || quizState === "complete" || !Number.isFinite(questionIndex) || questionIndex < 0 || totalQuestions <= 0 ? "" : `Question ${questionIndex + 1} of ${totalQuestions}`;
@@ -185,7 +192,7 @@ class OpenTdbCard extends HTMLElement {
       ? `<section class="empty"><strong>Ready when you are</strong><button class="primary" data-action="start">Start quiz</button></section>`
       : quizState === "complete"
         ? this.renderComplete(score, elapsed, leaderboard)
-        : this.renderQuestion(question, choices, feedback);
+        : this.renderQuestion(question, choices, feedback, quizState === "question");
 
     this.renderShell(content, feedback ? "state-feedback" : quizState === "idle" ? "state-idle" : quizState === "complete" ? "state-complete" : "state-question", cardName, quizName, progress, footer);
     this.wireEvents(choices, questionIndex, feedback);
@@ -221,7 +228,7 @@ class OpenTdbCard extends HTMLElement {
     }
   }
 
-  private renderQuestion(question: QuizQuestion, choices: string[], feedback?: QuizFeedback) {
+  private renderQuestion(question: QuizQuestion, choices: string[], feedback?: QuizFeedback, canReplay = false) {
     const correctText = typeof feedback?.correct_answer === "string" ? feedback.correct_answer : undefined;
     const selectedIndex = this._selectedIndex ?? (feedback ? choices.findIndex((choice) => choice === feedback.answer) : -1);
     const shake = feedback && !feedback.correct && this._config.shake !== false ? " shake" : "";
@@ -242,7 +249,10 @@ class OpenTdbCard extends HTMLElement {
       : this._serviceError
         ? `<div class="feedback service-error" role="status" aria-live="polite">${this.escapeHtml(this._serviceError)}</div>`
         : "";
-    return `<section class="question-region${shake}" aria-busy="${this._submitting ? "true" : "false"}"><div class="question-copy"><h2>${this.escapeHtml(questionText)}</h2></div><div class="answers" role="group" aria-label="Answer choices">${answers}</div>${banner}</section>`;
+    const replay = canReplay && !this._submitting && this.ttsConfigured()
+      ? `<button class="replay" data-action="replay" aria-label="Replay question" title="Replay question"><ha-icon icon="mdi:replay"></ha-icon></button>`
+      : "";
+    return `<section class="question-region${shake}" aria-busy="${this._submitting ? "true" : "false"}"><div class="question-copy"><div class="question-heading"><h2>${this.escapeHtml(questionText)}</h2>${replay}</div></div><div class="answers" role="group" aria-label="Answer choices">${answers}</div>${banner}</section>`;
   }
 
   private renderComplete(score: QuizScore, elapsed: number, leaderboard: Record<string, any>[]) {
@@ -258,12 +268,14 @@ class OpenTdbCard extends HTMLElement {
   private wireEvents(choices: string[], questionIndex: number, feedback?: QuizFeedback) {
     this.querySelectorAll<HTMLElement>("[data-action='start']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession(); });
     this.querySelectorAll<HTMLElement>("[data-action='new']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession("opentdb/session/new"); });
+    this.querySelectorAll<HTMLElement>("[data-action='replay']").forEach((button) => button.onclick = () => { void this.speakQuestion(); });
     this.querySelectorAll<HTMLButtonElement>("[data-answer-index]").forEach((button) => button.onclick = () => {
       if (this._submitting || feedback) return;
       this.unlockAudio();
       const answerIndex = Number(button.dataset.answerIndex);
       const answer = choices[answerIndex];
       if (!Number.isInteger(answerIndex) || answer === undefined) return;
+      this.stopTts();
       this._submitting = true;
       this._selectedIndex = answerIndex;
       this._serviceError = undefined;
@@ -277,17 +289,19 @@ class OpenTdbCard extends HTMLElement {
         }
         this._session = session;
         this.render();
-      }).catch((error: unknown) => {
+      }).catch(() => {
         this._submitting = false;
-        this._serviceError = error instanceof Error && error.message
-          ? `Couldn't submit that answer: ${error.message}`
-          : "Couldn't submit that answer. Try again.";
+        this._serviceError = "Couldn't submit that answer. Try again.";
         this.render();
       });
     });
   }
 
-  private maybeCue(feedback: QuizFeedback | undefined, questionIndex: number, quizState: string) {
+  private maybeCue(feedback: QuizFeedback | undefined, questionIndex: number, quizState: string, question: QuizQuestion, choices: string[]) {
+    if (quizState === "question" && Number.isFinite(questionIndex) && this._narratedQuestion !== questionIndex) {
+      this._narratedQuestion = questionIndex;
+      void this.speakQuestion(question, choices);
+    }
     if (quizState === "complete") {
       if (!this._completedCued) {
         this._completedCued = true;
@@ -300,6 +314,30 @@ class OpenTdbCard extends HTMLElement {
     this._cuedQuestion = questionIndex;
     if (this._config.sound === false) return;
     if (feedback.correct) this.playChime(); else this.playBuzzer();
+  }
+
+  private ttsConfigured() {
+    return this._config.read_out_question === true
+      && typeof this._config.tts_engine === "string" && this._config.tts_engine.length > 0
+      && typeof this._config.media_player === "string" && this._config.media_player.length > 0;
+  }
+
+  private async speakQuestion(question = this._session?.question, choices = Array.isArray(question?.answers) ? question.answers.filter((choice): choice is string => typeof choice === "string") : []) {
+    if (!this._hass || !this.ttsConfigured() || typeof question?.question !== "string") return;
+    const message = `Question: ${question.question}. Answers: ${choices.map((choice, index) => `${String.fromCharCode(65 + index)}. ${choice}`).join(". ")}.`;
+    try {
+      await this._hass.callService("tts", "speak", {
+        media_player_entity_id: this._config.media_player,
+        message,
+      }, { entity_id: this._config.tts_engine });
+    } catch {
+      return;
+    }
+  }
+
+  private stopTts() {
+    if (!this._hass || !this.ttsConfigured()) return;
+    void this._hass.callService("media_player", "media_stop", {}, { entity_id: this._config.media_player }).catch(() => undefined);
   }
 
   private unlockAudio() {
