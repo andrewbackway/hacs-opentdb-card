@@ -44,17 +44,18 @@ class OpenTdbCard extends HTMLElement {
         const safeProgress = this.escapeHtml(progress);
         const safeFooter = this.escapeHtml(footer);
         this.innerHTML = `<style>
-      :host { display: block; color: var(--primary-text-color, #f7fbfc); }
-      ha-card { overflow: hidden; background: var(--card-background-color, #10252b); border: 1px solid rgba(255, 255, 255, .12); border-radius: 8px; }
-      .wrap { box-sizing: border-box; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: var(--opentdb-gap); min-height: 260px; max-height: var(--opentdb-card-height); padding: 20px; overflow: hidden; background: radial-gradient(circle at 100% 0, rgba(255, 190, 92, .2), transparent 34%), linear-gradient(135deg, #10252b 0%, #123b43 58%, #0c252d 100%); font-family: var(--paper-font-body1_-_font-family, sans-serif); }
+      :host { display: block; min-width: 0; max-width: 100%; color: var(--primary-text-color, #f7fbfc); }
+      ha-card { box-sizing: border-box; display: block; width: 100%; max-width: 100%; overflow: hidden; background: var(--card-background-color, #10252b); border: 1px solid rgba(255, 255, 255, .12); border-radius: 8px; }
+      .wrap { box-sizing: border-box; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: 100%; min-width: 0; max-width: 100%; gap: var(--opentdb-gap); min-height: 260px; padding: 20px; overflow: hidden; background: radial-gradient(circle at 100% 0, rgba(255, 190, 92, .2), transparent 34%), linear-gradient(135deg, #10252b 0%, #123b43 58%, #0c252d 100%); font-family: var(--paper-font-body1_-_font-family, sans-serif); }
       header { display: flex; align-items: end; justify-content: space-between; gap: 16px; min-width: 0; border-bottom: 1px solid rgba(255, 255, 255, .2); padding-bottom: 12px; }
       .title-block { min-width: 0; }
       .card-name { overflow: hidden; color: var(--opentdb-accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
       .quiz-name { display: -webkit-box; overflow: hidden; margin-top: 3px; font-size: 26px; font-weight: 800; line-height: 1.08; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
       .progress { flex: 0 0 auto; color: #b9d7d7; font-size: 14px; font-weight: 700; white-space: nowrap; }
       main { min-height: 0; }
-      .question-region { display: grid; align-content: start; gap: var(--opentdb-gap); min-height: 0; overflow: auto; overscroll-behavior: contain; }
-      .question-copy h2 { margin: 0; max-width: 34em; font-size: 28px; line-height: 1.18; }
+      .question-region { display: grid; align-content: start; min-width: 0; gap: var(--opentdb-gap); }
+      .question-copy { min-width: 0; }
+      .question-copy h2 { margin: 0; max-width: 34em; overflow-wrap: anywhere; font-size: 28px; line-height: 1.18; }
       .answers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
       button { display: grid; grid-template-columns: 30px minmax(0, 1fr) 24px; align-items: center; min-height: var(--opentdb-answer-min-height); border: 1px solid rgba(255, 255, 255, .24); border-radius: 8px; padding: 12px 14px; color: #f7fbfc; background: rgba(255, 255, 255, .1); font: inherit; font-size: 17px; font-weight: 700; line-height: 1.18; text-align: left; cursor: pointer; }
       button:hover, button:focus-visible { border-color: var(--opentdb-accent); background: rgba(255, 208, 111, .2); outline: 3px solid rgba(255, 208, 111, .35); outline-offset: 2px; }
@@ -87,8 +88,8 @@ class OpenTdbCard extends HTMLElement {
       .complete { overflow: auto; }
       .feedback.correct { animation: opentdb-pop 260ms ease-out; }
       @keyframes opentdb-pop { 0% { transform: scale(.9); } 50% { transform: scale(1.06); } 100% { transform: scale(1); } }
-      :host { --opentdb-card-height: 390px; --opentdb-gap: 12px; --opentdb-answer-min-height: 56px; --opentdb-accent: #ffd06f; --opentdb-primary: #ef715d; --opentdb-correct: #227d70; --opentdb-incorrect: #a64545; }
-      @media (max-width: 560px) { .wrap { max-height: none; } .answers { grid-template-columns: 1fr; } header { align-items: start; } .question-copy h2 { font-size: 24px; } }
+      :host { --opentdb-gap: 12px; --opentdb-answer-min-height: 56px; --opentdb-accent: #ffd06f; --opentdb-primary: #ef715d; --opentdb-correct: #227d70; --opentdb-incorrect: #a64545; }
+      @media (max-width: 560px) { .answers { grid-template-columns: 1fr; } header { align-items: start; flex-wrap: wrap; } .progress { flex-basis: 100%; text-align: right; } .question-copy h2 { font-size: 24px; } }
       @media (prefers-reduced-motion: reduce) { .shake, .feedback.correct { animation: none; } }
     </style><ha-card><div class="wrap ${stateClass}">
       <header><div class="title-block"><div class="card-name">${safeTitle}</div><div class="quiz-name">${safeQuizName}</div></div>${safeProgress ? `<div class="progress">${safeProgress}</div>` : ""}</header>
@@ -180,7 +181,10 @@ class OpenTdbCard extends HTMLElement {
         const board = leaderboard.length
             ? `<ol class="leaderboard" aria-label="Leaderboard">${leaderboard.slice(0, 5).map((row, index) => `<li><span class="lb-rank">${index + 1}</span><span class="lb-name">${this.escapeHtml(row.name ?? "Player")}</span><span class="lb-points">${this.escapeHtml(row.points_today ?? 0)} pts</span></li>`).join("")}</ol>`
             : "";
-        return `<section class="complete"><strong>Quiz complete</strong><div class="result">${this.escapeHtml(score.percentage || 0)}%</div><div class="result-detail">${this.escapeHtml(score.correct || 0)} of ${this.escapeHtml(score.answered || 0)} correct \u00b7 ${this.escapeHtml(score.points || 0)} pts \u00b7 ${this.escapeHtml(elapsed)}s</div>${board}<button class="primary" data-action="new">New quiz</button></section>`;
+        const newQuizButton = this._config.show_new_quiz_button !== false
+            ? `<button class="primary" data-action="new">New quiz</button>`
+            : "";
+        return `<section class="complete"><strong>Quiz complete</strong><div class="result">${this.escapeHtml(score.percentage || 0)}%</div><div class="result-detail">${this.escapeHtml(score.correct || 0)} of ${this.escapeHtml(score.answered || 0)} correct \u00b7 ${this.escapeHtml(score.points || 0)} pts \u00b7 ${this.escapeHtml(elapsed)}s</div>${board}${newQuizButton}</section>`;
     }
     wireEvents(choices, questionIndex, feedback) {
         this.querySelectorAll("[data-action='start']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.service("start_quiz"); });
@@ -293,6 +297,7 @@ class OpenTdbCardEditor extends HTMLElement {
             { name: "title", selector: { text: {} } },
             { name: "sound", selector: { boolean: {} } },
             { name: "shake", selector: { boolean: {} } },
+            { name: "show_new_quiz_button", selector: { boolean: {} } },
         ];
         form.addEventListener("value-changed", (event) => {
             const value = event.detail.value;

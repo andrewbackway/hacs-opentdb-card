@@ -26,6 +26,7 @@ title: Evening trivia
 | `title` | No | Heading shown at the top of the card. | `Open Trivia DB Quiz` |
 | `sound` | No | Play WebAudio sound effects (buzzer, chime, fanfare). | `true` |
 | `shake` | No | Shake the question on a wrong answer. Always disabled when the browser requests reduced motion. | `true` |
+| `show_new_quiz_button` | No | Show the **New quiz** button after a quiz is complete. | `true` |
 
 All quiz data is delivered through the single quiz sensor's `game` attribute, so no related entities need to be configured. If Home Assistant added a suffix such as `_2` to the entity ID, select the actual quiz sensor for the instance you want.
 
