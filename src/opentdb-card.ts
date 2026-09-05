@@ -365,7 +365,6 @@ class OpenTdbCardEditor extends HTMLElement {
     this.innerHTML = "<ha-form></ha-form>";
     const form = this.querySelector<HaForm>("ha-form")!;
     form.hass = this._hass;
-    form.data = this._config;
     form.schema = [
       { name: "quiz_id", selector: { text: {} } },
       { name: "title", selector: { text: {} } },
@@ -373,6 +372,7 @@ class OpenTdbCardEditor extends HTMLElement {
       { name: "shake", selector: { boolean: {} } },
       { name: "show_new_quiz_button", selector: { boolean: {} } },
     ];
+    form.data = this._config;
     form.addEventListener("value-changed", (event) => {
       const value = (event as ValueChangedEvent).detail.value;
       this._config = value;
