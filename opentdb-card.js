@@ -25,7 +25,6 @@ class OpenTdbCard extends HTMLElement {
     disconnectedCallback() {
         this.clearFeedbackTimer();
         this._sessionRequest++;
-        this._narratedQuestion = undefined;
     }
     static getStubConfig() { return { title: "Trivia Quiz" }; }
     static getConfigElement() { return document.createElement("opentdb-card-editor"); }
@@ -52,7 +51,6 @@ class OpenTdbCard extends HTMLElement {
         const request = ++this._sessionRequest;
         this._session = undefined;
         this._sessionError = undefined;
-        this._narratedQuestion = undefined;
         this.render();
         try {
             const session = await this.sessionRequest(command);
@@ -117,9 +115,6 @@ class OpenTdbCard extends HTMLElement {
       .lb-rank { color: var(--opentdb-accent); font-weight: 900; }
       .lb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
       .lb-points { color: #b9d7d7; white-space: nowrap; }
-      .question-heading { display: flex; align-items: start; gap: 10px; }
-      .question-heading h2 { flex: 1 1 auto; min-width: 0; }
-      .replay { flex: 0 0 auto; grid-template-columns: 1fr; min-width: 44px; min-height: 44px; padding: 8px; text-align: center; }
       .complete { overflow: auto; }
       .feedback.correct { animation: opentdb-pop 260ms ease-out; }
       @keyframes opentdb-pop { 0% { transform: scale(.9); } 50% { transform: scale(1.06); } 100% { transform: scale(1); } }
@@ -162,14 +157,14 @@ class OpenTdbCard extends HTMLElement {
             this._selectedIndex = undefined;
             this._cuedQuestion = undefined;
         }
-        this.maybeCue(feedback, questionIndex, quizState, question, choices);
+        this.maybeCue(feedback, questionIndex, quizState);
         const footer = quizState === "idle" || quizState === "complete" ? "" : `${points} pts${streak > 1 ? `  \u00b7  ${streak}x streak` : ""}  \u00b7  ${score.correct || 0}/${score.answered || 0}`;
         const progress = quizState === "idle" || quizState === "complete" || !Number.isFinite(questionIndex) || questionIndex < 0 || totalQuestions <= 0 ? "" : `Question ${questionIndex + 1} of ${totalQuestions}`;
         const content = quizState === "idle"
             ? `<section class="empty"><strong>Ready when you are</strong><button class="primary" data-action="start">Start quiz</button></section>`
             : quizState === "complete"
                 ? this.renderComplete(score, elapsed, leaderboard)
-                : this.renderQuestion(question, choices, feedback, quizState === "question");
+                : this.renderQuestion(question, choices, feedback);
         this.renderShell(content, feedback ? "state-feedback" : quizState === "idle" ? "state-idle" : quizState === "complete" ? "state-complete" : "state-question", cardName, quizName, progress, footer);
         this.wireEvents(choices, questionIndex, feedback);
         if (feedback && !session.complete && this._feedbackQuestion !== questionIndex && Number.isFinite(questionIndex)) {
@@ -205,7 +200,7 @@ class OpenTdbCard extends HTMLElement {
             this.render();
         }
     }
-    renderQuestion(question, choices, feedback, canReplay = false) {
+    renderQuestion(question, choices, feedback) {
         const correctText = typeof feedback?.correct_answer === "string" ? feedback.correct_answer : undefined;
         const selectedIndex = this._selectedIndex ?? (feedback ? choices.findIndex((choice) => choice === feedback.answer) : -1);
         const shake = feedback && !feedback.correct && this._config.shake !== false ? " shake" : "";
@@ -226,10 +221,7 @@ class OpenTdbCard extends HTMLElement {
             : this._serviceError
                 ? `<div class="feedback service-error" role="status" aria-live="polite">${this.escapeHtml(this._serviceError)}</div>`
                 : "";
-        const replay = canReplay && this.ttsConfigured()
-            ? `<button class="replay" data-action="replay" aria-label="Replay question" title="Replay question"><ha-icon icon="mdi:replay"></ha-icon></button>`
-            : "";
-        return `<section class="question-region${shake}" aria-busy="${this._submitting ? "true" : "false"}"><div class="question-copy"><div class="question-heading"><h2>${this.escapeHtml(questionText)}</h2>${replay}</div></div><div class="answers" role="group" aria-label="Answer choices">${answers}</div>${banner}</section>`;
+        return `<section class="question-region${shake}" aria-busy="${this._submitting ? "true" : "false"}"><div class="question-copy"><h2>${this.escapeHtml(questionText)}</h2></div><div class="answers" role="group" aria-label="Answer choices">${answers}</div>${banner}</section>`;
     }
     renderComplete(score, elapsed, leaderboard) {
         const board = leaderboard.length
@@ -243,7 +235,6 @@ class OpenTdbCard extends HTMLElement {
     wireEvents(choices, questionIndex, feedback) {
         this.querySelectorAll("[data-action='start']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession(); });
         this.querySelectorAll("[data-action='new']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession("opentdb/session/new"); });
-        this.querySelectorAll("[data-action='replay']").forEach((button) => button.onclick = () => { void this.speakQuestion(); });
         this.querySelectorAll("[data-answer-index]").forEach((button) => button.onclick = () => {
             if (this._submitting || feedback)
                 return;
@@ -252,7 +243,6 @@ class OpenTdbCard extends HTMLElement {
             const answer = choices[answerIndex];
             if (!Number.isInteger(answerIndex) || answer === undefined)
                 return;
-            this.stopTts();
             this._submitting = true;
             this._selectedIndex = answerIndex;
             this._serviceError = undefined;
@@ -274,11 +264,7 @@ class OpenTdbCard extends HTMLElement {
             });
         });
     }
-    maybeCue(feedback, questionIndex, quizState, question, choices) {
-        if (quizState === "question" && this._narratedQuestion !== questionIndex) {
-            this._narratedQuestion = questionIndex;
-            void this.speakQuestion(question, choices);
-        }
+    maybeCue(feedback, questionIndex, quizState) {
         if (quizState === "complete") {
             if (!this._completedCued) {
                 this._completedCued = true;
@@ -297,30 +283,6 @@ class OpenTdbCard extends HTMLElement {
             this.playChime();
         else
             this.playBuzzer();
-    }
-    ttsConfigured() {
-        return this._config.read_out_question === true
-            && typeof this._config.tts_engine === "string" && this._config.tts_engine.length > 0
-            && typeof this._config.media_player === "string" && this._config.media_player.length > 0;
-    }
-    async speakQuestion(question = this._session?.question, choices = Array.isArray(question?.answers) ? question.answers.filter((choice) => typeof choice === "string") : []) {
-        if (!this._hass || !this.ttsConfigured() || !question?.question)
-            return;
-        const message = `Question: ${question.question}. Answers: ${choices.map((choice, index) => `${String.fromCharCode(65 + index)}. ${choice}`).join(". ")}.`;
-        try {
-            await this._hass.callService("tts", "speak", {
-                media_player_entity_id: this._config.media_player,
-                message,
-            }, { entity_id: this._config.tts_engine });
-        }
-        catch {
-            return;
-        }
-    }
-    stopTts() {
-        if (!this._hass || !this.ttsConfigured())
-            return;
-        void this._hass.callService("media_player", "media_stop", {}, { entity_id: this._config.media_player }).catch(() => undefined);
     }
     unlockAudio() {
         if (this._config.sound === false)
@@ -391,11 +353,6 @@ class OpenTdbCardEditor extends HTMLElement {
             { name: "sound", selector: { boolean: {} } },
             { name: "shake", selector: { boolean: {} } },
             { name: "show_new_quiz_button", selector: { boolean: {} } },
-            { name: "read_out_question", selector: { boolean: {} } },
-            ...(this._config.read_out_question === true ? [
-                { name: "tts_engine", selector: { entity: { domain: "tts" } } },
-                { name: "media_player", selector: { entity: { domain: "media_player" } } },
-            ] : []),
         ];
         form.data = this._config;
         form.addEventListener("value-changed", (event) => {
