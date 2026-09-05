@@ -1,4 +1,4 @@
-type QuizConfig = { quiz_id?: string; title?: string; sound?: boolean; shake?: boolean; read_out_question?: boolean; tts_engine?: string; media_player?: string };
+type QuizConfig = { quiz_id?: string; title?: string; sound?: boolean; shake?: boolean; show_new_quiz_button?: boolean; read_out_question?: boolean; tts_engine?: string; media_player?: string };
 type QuizFeedback = { correct?: boolean; answer?: string; correct_answer?: string; awarded_points?: number; speed_bonus?: number; streak_bonus?: number };
 type QuizQuestion = { question?: string; answers?: string[]; category?: string; type?: string; difficulty?: string };
 type QuizScore = { answered?: number; correct?: number; incorrect?: number; percentage?: number; points?: number; streak?: number; best_streak?: number };
@@ -249,7 +249,10 @@ class OpenTdbCard extends HTMLElement {
     const board = leaderboard.length
       ? `<ol class="leaderboard" aria-label="Leaderboard">${leaderboard.slice(0, 5).map((row, index) => `<li><span class="lb-rank">${index + 1}</span><span class="lb-name">${this.escapeHtml(row.name ?? "Player")}</span><span class="lb-points">${this.escapeHtml(row.points_today ?? 0)} pts</span></li>`).join("")}</ol>`
       : "";
-    return `<section class="complete"><strong>Quiz complete</strong><div class="result">${this.escapeHtml(score.percentage || 0)}%</div><div class="result-detail">${this.escapeHtml(score.correct || 0)} of ${this.escapeHtml(score.answered || 0)} correct \u00b7 ${this.escapeHtml(score.points || 0)} pts \u00b7 ${this.escapeHtml(elapsed)}s</div>${board}<button class="primary" data-action="new">New quiz</button></section>`;
+    const newQuizButton = this._config.show_new_quiz_button !== false
+      ? `<button class="primary" data-action="new">New quiz</button>`
+      : "";
+    return `<section class="complete"><strong>Quiz complete</strong><div class="result">${this.escapeHtml(score.percentage || 0)}%</div><div class="result-detail">${this.escapeHtml(score.correct || 0)} of ${this.escapeHtml(score.answered || 0)} correct \u00b7 ${this.escapeHtml(score.points || 0)} pts \u00b7 ${this.escapeHtml(elapsed)}s</div>${board}${newQuizButton}</section>`;
   }
 
   private wireEvents(choices: string[], questionIndex: number, feedback?: QuizFeedback) {
@@ -368,6 +371,7 @@ class OpenTdbCardEditor extends HTMLElement {
       { name: "title", selector: { text: {} } },
       { name: "sound", selector: { boolean: {} } },
       { name: "shake", selector: { boolean: {} } },
+      { name: "show_new_quiz_button", selector: { boolean: {} } },
       { name: "read_out_question", selector: { boolean: {} } },
       ...(this._config.read_out_question === true ? [
         { name: "tts_engine", selector: { entity: { domain: "tts" } } },
