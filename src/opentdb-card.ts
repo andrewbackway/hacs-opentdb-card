@@ -287,7 +287,7 @@ class OpenTdbCard extends HTMLElement {
       const answerIndex = Number(button.dataset.answerIndex);
       const answer = choices[answerIndex];
       if (!Number.isInteger(answerIndex) || answer === undefined) return;
-      await this.stopTts();
+      void this.stopTts();
       this._submitting = true;
       this._selectedIndex = answerIndex;
       this._serviceError = undefined;
