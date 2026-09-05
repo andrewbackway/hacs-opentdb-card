@@ -313,11 +313,10 @@ class OpenTdbCard extends HTMLElement {
     async speakQuestion(question = this._session?.question, choices = Array.isArray(question?.answers) ? question.answers.filter((choice) => typeof choice === "string") : []) {
         if (!this._hass || !this.ttsConfigured() || typeof question?.question !== "string")
             return;
-        const message = `Question: ${question.question}. Answers: ${choices.map((choice, index) => `${String.fromCharCode(65 + index)}. ${choice}`).join(". ")}.`;
+        const message = `${question.question}. Is it : ${choices.map((choice, index) => `${String.fromCharCode(65 + index)}. ${choice}`).join(". ")}.`;
         try {
             await this._hass.callService("tts", "speak", {
                 media_player_entity_id: this._config.media_player,
-                announce: false,
                 message,
             }, { entity_id: this._config.tts_engine });
         }

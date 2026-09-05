@@ -336,7 +336,6 @@ class OpenTdbCard extends HTMLElement {
     try {
       await this._hass.callService("tts", "speak", {
         media_player_entity_id: this._config.media_player,
-        announce: false,
         message,
       }, { entity_id: this._config.tts_engine });
     } catch {
