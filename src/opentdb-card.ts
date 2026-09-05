@@ -1,4 +1,4 @@
-type QuizConfig = { quiz_id?: string; title?: string; sound?: boolean; shake?: boolean; show_new_quiz_button?: boolean };
+type QuizConfig = { quiz_id?: string; title?: string; sound?: boolean; shake?: boolean; show_new_quiz_button?: boolean; read_out_question?: boolean; tts_engine?: string; media_player?: string };
 type QuizFeedback = { correct?: boolean; answer?: string; correct_answer?: string; awarded_points?: number; speed_bonus?: number; streak_bonus?: number };
 type QuizQuestion = { question?: string; answers?: string[]; category?: string; type?: string; difficulty?: string };
 type QuizScore = { answered?: number; correct?: number; incorrect?: number; percentage?: number; points?: number; streak?: number; best_streak?: number };
@@ -32,10 +32,9 @@ class OpenTdbCard extends HTMLElement {
   }
 
   set hass(value: Hass) {
-    const changed = this._hass !== value;
+    const wasUnset = !this._hass;
     this._hass = value;
-    if (changed) void this.startSession();
-    this.render();
+    if (wasUnset) void this.startSession();
   }
 
   disconnectedCallback() {
@@ -371,6 +370,11 @@ class OpenTdbCardEditor extends HTMLElement {
       { name: "sound", selector: { boolean: {} } },
       { name: "shake", selector: { boolean: {} } },
       { name: "show_new_quiz_button", selector: { boolean: {} } },
+      { name: "read_out_question", selector: { boolean: {} } },
+      ...(this._config.read_out_question === true ? [
+        { name: "tts_engine", selector: { entity: { domain: "tts" } } },
+        { name: "media_player", selector: { entity: { domain: "media_player" } } },
+      ] : []),
     ];
     form.data = this._config;
     form.addEventListener("value-changed", (event) => {

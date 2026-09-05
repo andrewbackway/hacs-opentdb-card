@@ -16,11 +16,10 @@ class OpenTdbCard extends HTMLElement {
         this.render();
     }
     set hass(value) {
-        const changed = this._hass !== value;
+        const wasUnset = !this._hass;
         this._hass = value;
-        if (changed)
+        if (wasUnset)
             void this.startSession();
-        this.render();
     }
     disconnectedCallback() {
         this.clearFeedbackTimer();
@@ -353,6 +352,11 @@ class OpenTdbCardEditor extends HTMLElement {
             { name: "sound", selector: { boolean: {} } },
             { name: "shake", selector: { boolean: {} } },
             { name: "show_new_quiz_button", selector: { boolean: {} } },
+            { name: "read_out_question", selector: { boolean: {} } },
+            ...(this._config.read_out_question === true ? [
+                { name: "tts_engine", selector: { entity: { domain: "tts" } } },
+                { name: "media_player", selector: { entity: { domain: "media_player" } } },
+            ] : []),
         ];
         form.data = this._config;
         form.addEventListener("value-changed", (event) => {
