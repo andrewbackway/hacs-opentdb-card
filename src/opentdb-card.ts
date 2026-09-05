@@ -269,13 +269,13 @@ class OpenTdbCard extends HTMLElement {
     this.querySelectorAll<HTMLElement>("[data-action='start']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession(); });
     this.querySelectorAll<HTMLElement>("[data-action='new']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession("opentdb/session/new"); });
     this.querySelectorAll<HTMLElement>("[data-action='replay']").forEach((button) => button.onclick = () => { void this.speakQuestion(); });
-    this.querySelectorAll<HTMLButtonElement>("[data-answer-index]").forEach((button) => button.onclick = () => {
+    this.querySelectorAll<HTMLButtonElement>("[data-answer-index]").forEach((button) => button.onclick = async () => {
       if (this._submitting || feedback) return;
       this.unlockAudio();
       const answerIndex = Number(button.dataset.answerIndex);
       const answer = choices[answerIndex];
       if (!Number.isInteger(answerIndex) || answer === undefined) return;
-      this.stopTts();
+      await this.stopTts();
       this._submitting = true;
       this._selectedIndex = answerIndex;
       this._serviceError = undefined;
@@ -328,6 +328,7 @@ class OpenTdbCard extends HTMLElement {
     try {
       await this._hass.callService("tts", "speak", {
         media_player_entity_id: this._config.media_player,
+        announce: false,
         message,
       }, { entity_id: this._config.tts_engine });
     } catch {
@@ -335,9 +336,13 @@ class OpenTdbCard extends HTMLElement {
     }
   }
 
-  private stopTts() {
+  private async stopTts() {
     if (!this._hass || !this.ttsConfigured()) return;
-    void this._hass.callService("media_player", "media_stop", {}, { entity_id: this._config.media_player }).catch(() => undefined);
+    try {
+      await this._hass.callService("media_player", "media_stop", {}, { entity_id: this._config.media_player });
+    } catch {
+      return;
+    }
   }
 
   private unlockAudio() {

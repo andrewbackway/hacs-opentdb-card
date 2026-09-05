@@ -244,7 +244,7 @@ class OpenTdbCard extends HTMLElement {
         this.querySelectorAll("[data-action='start']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession(); });
         this.querySelectorAll("[data-action='new']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession("opentdb/session/new"); });
         this.querySelectorAll("[data-action='replay']").forEach((button) => button.onclick = () => { void this.speakQuestion(); });
-        this.querySelectorAll("[data-answer-index]").forEach((button) => button.onclick = () => {
+        this.querySelectorAll("[data-answer-index]").forEach((button) => button.onclick = async () => {
             if (this._submitting || feedback)
                 return;
             this.unlockAudio();
@@ -252,7 +252,7 @@ class OpenTdbCard extends HTMLElement {
             const answer = choices[answerIndex];
             if (!Number.isInteger(answerIndex) || answer === undefined)
                 return;
-            this.stopTts();
+            await this.stopTts();
             this._submitting = true;
             this._selectedIndex = answerIndex;
             this._serviceError = undefined;
@@ -310,6 +310,7 @@ class OpenTdbCard extends HTMLElement {
         try {
             await this._hass.callService("tts", "speak", {
                 media_player_entity_id: this._config.media_player,
+                announce: false,
                 message,
             }, { entity_id: this._config.tts_engine });
         }
@@ -317,10 +318,15 @@ class OpenTdbCard extends HTMLElement {
             return;
         }
     }
-    stopTts() {
+    async stopTts() {
         if (!this._hass || !this.ttsConfigured())
             return;
-        void this._hass.callService("media_player", "media_stop", {}, { entity_id: this._config.media_player }).catch(() => undefined);
+        try {
+            await this._hass.callService("media_player", "media_stop", {}, { entity_id: this._config.media_player });
+        }
+        catch {
+            return;
+        }
     }
     unlockAudio() {
         if (this._config.sound === false)
