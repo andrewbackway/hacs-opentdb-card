@@ -9,7 +9,7 @@ A standalone Lovelace card for the [Open Trivia Database Home Assistant integrat
 
 Add `https://github.com/andrewbackway/hacs-opentdb-card` as a custom HACS repository with the category **Dashboard**. Install **Open Trivia Database Card**, then reload your browser.
 
-The card expects the integration to be installed and configured first. Add it to a dashboard as a Manual card:
+The card expects the integration to be installed and configured first. The integration exposes one primary Quiz sensor; the card targets that entity and gets question, score, elapsed time, feedback, and player data through authenticated WebSocket commands. Add it to a dashboard as a Manual card:
 
 ```yaml
 type: custom:opentdb-card
