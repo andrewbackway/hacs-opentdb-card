@@ -267,9 +267,16 @@ class OpenTdbCard extends HTMLElement {
                 }
                 this._session = session;
                 this.render();
-            }).catch(() => {
+            }).catch((error) => {
                 this._submitting = false;
-                this._serviceError = "Couldn't submit that answer. Try again.";
+                const message = error instanceof Error
+                    ? error.message
+                    : typeof error === "object" && error !== null && typeof error.message === "string"
+                        ? error.message
+                        : undefined;
+                this._serviceError = message
+                    ? `Couldn't submit that answer: ${message}`
+                    : "Couldn't submit that answer. Try again.";
                 this.render();
             });
         });

@@ -3,6 +3,7 @@ type QuizFeedback = { correct?: boolean; answer?: string; correct_answer?: strin
 type QuizQuestion = { question?: string; answers?: string[]; category?: string; type?: string; difficulty?: string };
 type QuizScore = { answered?: number; correct?: number; incorrect?: number; percentage?: number; points?: number; streak?: number; best_streak?: number };
 type QuizSession = { session_id: string; set_id?: string; quiz_name?: string; question_index: number; total_questions: number; question?: QuizQuestion; feedback?: QuizFeedback; score?: QuizScore; elapsed_seconds?: number; complete?: boolean; leaderboard?: Record<string, any>[] };
+type WebSocketError = { message?: unknown };
 type Hass = { callWS: <T>(message: Record<string, unknown>) => Promise<T>; callService: (domain: string, service: string, serviceData?: Record<string, unknown>, target?: Record<string, unknown>) => Promise<unknown> };
 type HaForm = HTMLElement & { hass?: Hass; data?: QuizConfig; schema?: unknown[] };
 type ValueChangedEvent = CustomEvent<{ value: QuizConfig }>;
@@ -289,9 +290,16 @@ class OpenTdbCard extends HTMLElement {
         }
         this._session = session;
         this.render();
-      }).catch(() => {
+      }).catch((error: unknown) => {
         this._submitting = false;
-        this._serviceError = "Couldn't submit that answer. Try again.";
+        const message = error instanceof Error
+          ? error.message
+          : typeof error === "object" && error !== null && typeof (error as WebSocketError).message === "string"
+            ? (error as WebSocketError).message
+            : undefined;
+        this._serviceError = message
+          ? `Couldn't submit that answer: ${message}`
+          : "Couldn't submit that answer. Try again.";
         this.render();
       });
     });
@@ -324,7 +332,7 @@ class OpenTdbCard extends HTMLElement {
 
   private async speakQuestion(question = this._session?.question, choices = Array.isArray(question?.answers) ? question.answers.filter((choice): choice is string => typeof choice === "string") : []) {
     if (!this._hass || !this.ttsConfigured() || typeof question?.question !== "string") return;
-    const message = `Question: ${question.question}. Answers: ${choices.map((choice, index) => `${String.fromCharCode(65 + index)}. ${choice}`).join(". ")}.`;
+    const message = `${question.question}. Is it : ${choices.map((choice, index) => `${String.fromCharCode(65 + index)}. ${choice}`).join(". ")}.`;
     try {
       await this._hass.callService("tts", "speak", {
         media_player_entity_id: this._config.media_player,
