@@ -16,7 +16,7 @@ class OpenTdbCard extends HTMLElement {
         this.render();
     }
     set hass(value) {
-        const changed = this._hass !== value;
+        const changed = this._hass === undefined;
         this._hass = value;
         if (changed)
             void this.startSession();
