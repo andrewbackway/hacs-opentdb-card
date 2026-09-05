@@ -13,7 +13,7 @@ The card expects the integration to be installed and configured first. Add it to
 
 ```yaml
 type: custom:opentdb-card
-entity: sensor.trivia_quiz_quiz
+quiz_id: family_trivia
 title: Evening trivia
 ```
 
@@ -22,15 +22,13 @@ title: Evening trivia
 | Option | Required | Description | Default |
 | --- | --- | --- | --- |
 | `type` | Yes | Must be `custom:opentdb-card`. | None |
-| `entity` | Yes | The quiz sensor (`sensor.<name>_quiz`) provided by the Open Trivia Database integration. In the visual editor, only sensors from the `opentdb` integration are offered. The card reads everything it needs from this one entity's `game` attribute. | None |
+| `quiz_id` | Yes | Stable quiz identifier provided by the Open Trivia Database integration. | None |
 | `title` | No | Heading shown at the top of the card. | `Open Trivia DB Quiz` |
 | `sound` | No | Play WebAudio sound effects (buzzer, chime, fanfare). | `true` |
 | `shake` | No | Shake the question on a wrong answer. Always disabled when the browser requests reduced motion. | `true` |
 | `show_new_quiz_button` | No | Show the **New quiz** button after a quiz is complete. | `true` |
 
-All quiz data is delivered through the single quiz sensor's `game` attribute, so no related entities need to be configured. If Home Assistant added a suffix such as `_2` to the entity ID, select the actual quiz sensor for the instance you want.
-
-The card starts a quiz using the integration's `opentdb.start_quiz` service and submits answers as the logged-in Home Assistant user. The OpenTDB integration must be installed, loaded, and up to date for these actions to work.
+The card opens an authenticated per-user session through the integration's WebSocket API. The active question, current progress, feedback, score, and completion state are held in the card's JavaScript instance and are never read from shared sensor state. The OpenTDB integration must be installed, loaded, and up to date for these actions to work.
 
 The card displays the current question and shuffled answers, submits answers for the logged-in Home Assistant user, shows feedback with points earned (speed and streak bonuses), plays sound effects, shakes on a wrong answer, advances after a short delay, and finishes with a results screen showing the final percentage, elapsed time, and leaderboard.
 

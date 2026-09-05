@@ -1,105 +1,81 @@
-# OpenTDB Integration ↔ Card Contract (v0.2.0)
+# OpenTDB Integration and Card Contract
 
-> The previous "confirmed bug" (missing `await` on `async_extract_config_entry_ids`)
-> **no longer applies** — the integration already awaits it. This document now describes
-> the live data/service contract between the integration and the card.
+The card uses a stable `quiz_id` and an authenticated Home Assistant WebSocket
+session. It does not read a quiz sensor or shared entity attributes for runtime
+quiz state.
 
-## Single-entity contract
+## Session Commands
 
-The card is configured with **one** entity: the quiz sensor `sensor.<name>_quiz`.
-It reads **only** `state` + `attributes.game`. It no longer derives sibling entities by
-string-replacing the `_quiz` suffix.
+Every request includes `quiz_id`. Home Assistant identifies the caller from
+the WebSocket connection; the card does not send a user name or user ID.
 
-### `state`
+### `opentdb/session/start`
 
-One of: `idle` | `question` | `feedback` | `complete`.
+Starts or resumes the calling user's quiz session.
 
-### `attributes.game`
+### `opentdb/session/new`
+
+Starts a new quiz session for the calling user using a newly fetched question
+set.
+
+### `opentdb/session/submit`
+
+Accepts `session_id`, `question_index`, and `answer`. The response contains
+server-authoritative feedback and updated session state.
+
+### `opentdb/session/next`
+
+Advances the calling user's session after feedback and returns the next
+spoiler-safe question.
+
+## Session Response
 
 ```jsonc
 {
-  "quiz_name": "Family Trivia",
+  "session_id": "opaque-per-user-session-id",
   "set_id": "a1b2c3d4",
-  "day": "2026-09-04",
-  "question_index": 2,            // 0-based
+  "quiz_name": "Family Trivia",
+  "question_index": 2,
   "total_questions": 10,
-  "question": {                   // null when idle/complete; NEVER contains correct_answer
+  "question": {
     "category": "Science & Nature",
     "type": "multiple",
     "difficulty": "medium",
     "question": "What is ...?",
-    "answers": ["A", "B", "C", "D"]   // shuffled once at fetch; render in this order
+    "answers": ["A", "B", "C", "D"]
   },
-  "feedback": {                   // present ONLY in the `feedback` state (post-submit)
-    "correct": true,
-    "answer": "B",                // the player's submitted answer
-    "correct_answer": "B",        // revealed only after submitting
-    "awarded_points": 175,
-    "speed_bonus": 50,
-    "streak_bonus": 25
-  },
-  "score": {
-    "answered": 3, "correct": 2, "incorrect": 1,
-    "percentage": 66.7, "points": 340, "streak": 0, "best_streak": 3
-  },
+  "feedback": null,
+  "score": { "answered": 2, "correct": 2, "incorrect": 0, "points": 340, "streak": 2 },
   "elapsed_seconds": 42,
-  "player": { "name": "Alice", "total_points": 12040, "daily_play_streak": 5 },
-  "leaderboard": [
-    { "name": "Alice", "points_today": 340, "points_total": 12040, "accuracy": 81.2, "best_streak": 6 },
-    { "name": "Bob",   "points_today": 210, "points_total":  9800, "accuracy": 74.0, "best_streak": 4 }
-  ]
+  "complete": false,
+  "leaderboard": []
 }
 ```
 
-**Spoiler rule:** `correct_answer` is withheld from `question` and only appears inside
-`feedback` after the player submits. Do not reveal the answer before `feedback` exists.
+`question` never contains `correct_answer`. That value may appear only in
+`feedback` after a successful submission. Sessions, question indexes, and
+submissions are validated against the authenticated caller. Duplicate submits
+for the same session and question must be idempotent.
 
-## Services (called by the card)
+## State Ownership
 
-All target the OpenTDB device via the configured `entity_id`; each user-scoped service
-requires an authenticated Home Assistant user context.
+- The card owns the active `QuizSession` in JavaScript instance state.
+- The integration owns session validity, question ordering, scoring, timing,
+  and leaderboard calculation.
+- No quiz sensor, `attributes.game`, `entity_id` service target, or shared
+  entity state is part of the runtime contract.
 
-| Service | Purpose |
-|---|---|
-| `opentdb.start_quiz` | Start/resume the current shared set for the calling user (bootstraps a set if none exists). |
-| `opentdb.new_quiz` | Force-fetch a brand-new shared set, then start it. |
-| `opentdb.submit_answer` | Submit one answer (`question_index`, `answer`). Server scores it. |
-| `opentdb.next_question` | Advance after feedback. |
-| `opentdb.reset_quiz` | Reset the calling user's progress. |
-| `opentdb.refresh` | Re-publish state without fetching. |
+## Breaking Change
 
-`opentdb.refresh_questions` remains as a deprecated alias of `new_quiz`.
+The quiz sensor, its `attributes.game` payload, sensor entity picker, and the
+legacy entity-targeted quiz services are removed. Card configuration must use
+`quiz_id`. The card and integration must be released together.
 
-## Scoring (server-authoritative)
+## Verification
 
-- Correct answer: `100` base points.
-- Speed bonus: up to `+100`, decaying linearly to `0` across a 15s window from when the
-  question was presented (`presented_at`).
-- Streak bonus: `+25` per consecutive correct answer, capped at 5 (max `+125`). A wrong
-  answer resets the streak.
-- Daily play streak: consecutive days the user has answered at least one question.
-
-## Daily set behaviour
-
-- A shared question set is fetched once per day at the configured refresh time (and on
-  first setup if the cache is empty). All players answer the same set.
-- `start_quiz` reuses the existing set and resets only the calling player; `new_quiz`
-  force-fetches a replacement set.
-
-## Card behaviour notes
-
-- Answer buttons disable immediately on tap (before the service round-trip).
-- The `next_question` timer is cleared on disconnect and guarded against firing while
-  unmounted.
-- Sound effects are synthesised via WebAudio (no bundled assets); wrong answers buzz +
-  shake, correct answers chime + pop, quiz completion plays a short fanfare. All motion
-  respects `prefers-reduced-motion`, and both sound and shake are toggleable in the card
-  editor.
-
-## Verification checklist
-
-1. `opentdb.start_quiz` / `submit_answer` / `next_question` succeed for an authenticated
-   user targeting the quiz device.
-2. `question.answers` renders; `correct_answer` is absent until `feedback`.
-3. Points/streak/leaderboard update across players on the shared daily set.
-4. Duplicate quiz names still get unique entity IDs with stable sensor suffixes.
+1. Two authenticated users play the same quiz simultaneously with different
+   answers and see independent question, feedback, score, and completion state.
+2. A dashboard reload resumes only the caller's session.
+3. One user's submission does not repaint another user's open card.
+4. Stale indexes, duplicate submissions, expired sessions, unauthorized quiz
+   IDs, disconnects, and daily set rollover are covered by tests.

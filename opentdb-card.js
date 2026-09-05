@@ -4,13 +4,27 @@ class OpenTdbCard extends HTMLElement {
     constructor() {
         super(...arguments);
         this._config = {};
+        this._sessionRequest = 0;
         this._submitting = false;
         this._completedCued = false;
     }
-    setConfig(config) { this._config = config; this.render(); }
-    set hass(value) { this._hass = value; this.render(); }
+    setConfig(config) {
+        const changed = this._config.quiz_id !== config.quiz_id;
+        this._config = config;
+        if (changed)
+            void this.startSession();
+        this.render();
+    }
+    set hass(value) {
+        const changed = this._hass !== value;
+        this._hass = value;
+        if (changed)
+            void this.startSession();
+        this.render();
+    }
     disconnectedCallback() {
         this.clearFeedbackTimer();
+        this._sessionRequest++;
     }
     static getStubConfig() { return { title: "Trivia Quiz" }; }
     static getConfigElement() { return document.createElement("opentdb-card-editor"); }
@@ -26,17 +40,33 @@ class OpenTdbCard extends HTMLElement {
             this._feedbackQuestion = undefined;
         }
     }
-    getQuizState() {
-        if (!this._hass)
-            return undefined;
-        const entity = this._config.entity;
-        return entity ? this._hass.states[entity] : undefined;
+    async sessionRequest(command, data = {}) {
+        if (!this._hass || !this._config.quiz_id)
+            throw new Error("Quiz is not configured");
+        return this._hass.callWS({ type: command, quiz_id: this._config.quiz_id, ...data });
     }
-    async service(service, data = {}) {
-        const entity = this._config.entity;
-        if (!this._hass || !entity)
+    async startSession(command = "opentdb/session/start") {
+        if (!this._hass || !this._config.quiz_id)
             return;
-        await this._hass.callService("opentdb", service, { ...data, entity_id: entity });
+        const request = ++this._sessionRequest;
+        this._session = undefined;
+        this._sessionError = undefined;
+        this.render();
+        try {
+            const session = await this.sessionRequest(command);
+            if (request !== this._sessionRequest || !this.isConnected)
+                return;
+            this._session = session;
+            this._selectedIndex = undefined;
+            this._submitting = false;
+            this.render();
+        }
+        catch {
+            if (request !== this._sessionRequest || !this.isConnected)
+                return;
+            this._sessionError = "Couldn't load the quiz. Check the OpenTDB integration.";
+            this.render();
+        }
     }
     renderShell(content, stateClass, title, quizName, progress = "", footer = "") {
         const safeTitle = this.escapeHtml(title);
@@ -45,8 +75,8 @@ class OpenTdbCard extends HTMLElement {
         const safeFooter = this.escapeHtml(footer);
         this.innerHTML = `<style>
       :host { display: block; min-width: 0; max-width: 100%; color: var(--primary-text-color, #f7fbfc); }
-      ha-card { box-sizing: border-box; display: block; width: 100%; max-width: 100%; overflow: hidden; background: var(--card-background-color, #10252b); border: 1px solid rgba(255, 255, 255, .12); border-radius: 8px; }
-      .wrap { box-sizing: border-box; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; width: 100%; min-width: 0; max-width: 100%; gap: var(--opentdb-gap); min-height: 260px; padding: 20px; overflow: hidden; background: radial-gradient(circle at 100% 0, rgba(255, 190, 92, .2), transparent 34%), linear-gradient(135deg, #10252b 0%, #123b43 58%, #0c252d 100%); font-family: var(--paper-font-body1_-_font-family, sans-serif); }
+      ha-card { box-sizing: border-box; display: block; width: 100%; max-width: 100%; overflow: visible; background: var(--card-background-color, #10252b); border: 1px solid rgba(255, 255, 255, .12); border-radius: 8px; }
+      .wrap { box-sizing: border-box; display: grid; grid-template-rows: auto auto auto; width: 100%; min-width: 0; max-width: 100%; gap: var(--opentdb-gap); min-height: 260px; padding: 20px; overflow: visible; background: radial-gradient(circle at 100% 0, rgba(255, 190, 92, .2), transparent 34%), linear-gradient(135deg, #10252b 0%, #123b43 58%, #0c252d 100%); font-family: var(--paper-font-body1_-_font-family, sans-serif); }
       header { display: flex; align-items: end; justify-content: space-between; gap: 16px; min-width: 0; border-bottom: 1px solid rgba(255, 255, 255, .2); padding-bottom: 12px; }
       .title-block { min-width: 0; }
       .card-name { overflow: hidden; color: var(--opentdb-accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
@@ -55,7 +85,7 @@ class OpenTdbCard extends HTMLElement {
       main { min-height: 0; }
       .question-region { display: grid; align-content: start; min-width: 0; gap: var(--opentdb-gap); }
       .question-copy { min-width: 0; }
-      .question-copy h2 { margin: 0; max-width: 34em; overflow-wrap: anywhere; font-size: 28px; line-height: 1.18; }
+      .question-copy h2 { margin: 0; max-width: 34em; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; font-size: 28px; line-height: 1.18; }
       .answers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
       button { display: grid; grid-template-columns: 30px minmax(0, 1fr) 24px; align-items: center; min-height: var(--opentdb-answer-min-height); border: 1px solid rgba(255, 255, 255, .24); border-radius: 8px; padding: 12px 14px; color: #f7fbfc; background: rgba(255, 255, 255, .1); font: inherit; font-size: 17px; font-weight: 700; line-height: 1.18; text-align: left; cursor: pointer; }
       button:hover, button:focus-visible { border-color: var(--opentdb-accent); background: rgba(255, 208, 111, .2); outline: 3px solid rgba(255, 208, 111, .35); outline-offset: 2px; }
@@ -97,36 +127,31 @@ class OpenTdbCard extends HTMLElement {
       <footer>${safeFooter}</footer>
     </div></ha-card>`;
     }
-    getGame() {
-        const state = this.getQuizState();
-        const game = state?.attributes?.game;
-        return game && typeof game === "object" ? game : undefined;
-    }
     render() {
-        const entity = this._config.entity;
-        const state = this.getQuizState();
         const cardName = this._config.title || "Open Trivia DB Quiz";
-        if (!entity) {
-            this.renderShell(`<section class="empty"><strong>Choose a quiz to begin</strong><div class="result-detail">Select an OpenTDB quiz entity in the card configuration.</div></section>`, "state-unconfigured", cardName, "Trivia Quiz", "", "");
+        const quizId = this._config.quiz_id;
+        if (!quizId) {
+            this.renderShell(`<section class="empty"><strong>Choose a quiz to begin</strong><div class="result-detail">Set an OpenTDB quiz ID in the card configuration.</div></section>`, "state-unconfigured", cardName, "Trivia Quiz", "", "");
             return;
         }
-        if (!state || state.state === "unavailable" || state.state === "unknown") {
-            this.renderShell(`<section class="unavailable"><strong>Quiz unavailable</strong><p>Waiting for the OpenTDB quiz entity.</p></section>`, "state-unavailable", cardName, "Trivia Quiz", "", "");
+        if (!this._session) {
+            const message = this._sessionError || "Loading your quiz...";
+            this.renderShell(`<section class="unavailable"><strong>${this._sessionError ? "Quiz unavailable" : "Loading quiz"}</strong><p>${this.escapeHtml(message)}</p></section>`, this._sessionError ? "state-unavailable" : "state-loading", cardName, "Trivia Quiz", "", "");
             return;
         }
-        const game = this.getGame() || {};
-        const quizState = state.state;
-        const question = game.question || {};
-        const score = game.score || {};
-        const feedback = game.feedback;
-        const leaderboard = Array.isArray(game.leaderboard) ? game.leaderboard : [];
+        const session = this._session;
+        const question = session.question || {};
+        const score = session.score || {};
+        const feedback = session.feedback;
+        const leaderboard = Array.isArray(session.leaderboard) ? session.leaderboard : [];
         const choices = Array.isArray(question.answers) ? question.answers.filter((choice) => typeof choice === "string") : [];
-        const quizName = typeof game.quiz_name === "string" ? game.quiz_name : "Trivia Quiz";
-        const questionIndex = Number(game.question_index);
-        const totalQuestions = Number(game.total_questions || 0);
-        const elapsed = Number(game.elapsed_seconds || 0);
+        const quizName = typeof session.quiz_name === "string" ? session.quiz_name : "Trivia Quiz";
+        const questionIndex = Number(session.question_index);
+        const totalQuestions = Number(session.total_questions || 0);
+        const elapsed = Number(session.elapsed_seconds || 0);
         const points = Number(score.points || 0);
         const streak = Number(score.streak || 0);
+        const quizState = session.complete ? "complete" : feedback ? "feedback" : question.question ? "question" : "idle";
         if (!feedback && !this._submitting) {
             this.clearFeedbackTimer();
             this._selectedIndex = undefined;
@@ -142,7 +167,7 @@ class OpenTdbCard extends HTMLElement {
                 : this.renderQuestion(question, choices, feedback);
         this.renderShell(content, feedback ? "state-feedback" : quizState === "idle" ? "state-idle" : quizState === "complete" ? "state-complete" : "state-question", cardName, quizName, progress, footer);
         this.wireEvents(choices, questionIndex, feedback);
-        if (feedback && this._feedbackQuestion !== questionIndex && Number.isFinite(questionIndex)) {
+        if (feedback && !session.complete && this._feedbackQuestion !== questionIndex && Number.isFinite(questionIndex)) {
             this._submitting = false;
             this.clearFeedbackTimer();
             this._feedbackQuestion = questionIndex;
@@ -150,8 +175,29 @@ class OpenTdbCard extends HTMLElement {
                 this._feedbackTimer = undefined;
                 if (!this.isConnected)
                     return;
-                void this.service("next_question");
+                void this.advanceSession();
             }, 1300);
+        }
+    }
+    async advanceSession() {
+        const request = ++this._sessionRequest;
+        try {
+            const session = await this.sessionRequest("opentdb/session/next", { session_id: this._session?.session_id });
+            if (request !== this._sessionRequest || !this.isConnected)
+                return;
+            if (this._session?.set_id && session.set_id && this._session.set_id !== session.set_id) {
+                void this.startSession();
+                return;
+            }
+            this._session = session;
+            this._selectedIndex = undefined;
+            this.render();
+        }
+        catch {
+            if (request !== this._sessionRequest || !this.isConnected)
+                return;
+            this._sessionError = "Couldn't load the next question.";
+            this.render();
         }
     }
     renderQuestion(question, choices, feedback) {
@@ -187,8 +233,8 @@ class OpenTdbCard extends HTMLElement {
         return `<section class="complete"><strong>Quiz complete</strong><div class="result">${this.escapeHtml(score.percentage || 0)}%</div><div class="result-detail">${this.escapeHtml(score.correct || 0)} of ${this.escapeHtml(score.answered || 0)} correct \u00b7 ${this.escapeHtml(score.points || 0)} pts \u00b7 ${this.escapeHtml(elapsed)}s</div>${board}${newQuizButton}</section>`;
     }
     wireEvents(choices, questionIndex, feedback) {
-        this.querySelectorAll("[data-action='start']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.service("start_quiz"); });
-        this.querySelectorAll("[data-action='new']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.service("new_quiz"); });
+        this.querySelectorAll("[data-action='start']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession(); });
+        this.querySelectorAll("[data-action='new']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession("opentdb/session/new"); });
         this.querySelectorAll("[data-answer-index]").forEach((button) => button.onclick = () => {
             if (this._submitting || feedback)
                 return;
@@ -201,7 +247,17 @@ class OpenTdbCard extends HTMLElement {
             this._selectedIndex = answerIndex;
             this._serviceError = undefined;
             this.render();
-            void this.service("submit_answer", { question_index: Number.isFinite(questionIndex) ? questionIndex : 0, answer }).catch(() => {
+            const request = ++this._sessionRequest;
+            void this.sessionRequest("opentdb/session/submit", { session_id: this._session?.session_id, question_index: Number.isFinite(questionIndex) ? questionIndex : 0, answer }).then((session) => {
+                if (request !== this._sessionRequest || !this.isConnected)
+                    return;
+                if (this._session?.set_id && session.set_id && this._session.set_id !== session.set_id) {
+                    void this.startSession();
+                    return;
+                }
+                this._session = session;
+                this.render();
+            }).catch(() => {
                 this._submitting = false;
                 this._serviceError = "Couldn't submit that answer. Try again.";
                 this.render();
@@ -293,7 +349,7 @@ class OpenTdbCardEditor extends HTMLElement {
         form.hass = this._hass;
         form.data = this._config;
         form.schema = [
-            { name: "entity", selector: { entity: { domain: "sensor", integration: "opentdb" } } },
+            { name: "quiz_id", selector: { text: {} } },
             { name: "title", selector: { text: {} } },
             { name: "sound", selector: { boolean: {} } },
             { name: "shake", selector: { boolean: {} } },
