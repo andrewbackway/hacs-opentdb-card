@@ -29,7 +29,6 @@ media_player: media_player.kitchen_speaker
 | `title` | No | Heading shown at the top of the card. | `Open Trivia DB Quiz` |
 | `sound` | No | Play WebAudio sound effects (buzzer, chime, fanfare). | `true` |
 | `shake` | No | Shake the question on a wrong answer. Always disabled when the browser requests reduced motion. | `true` |
-| `show_new_quiz_button` | No | Show the **New quiz** button after a quiz is complete. | `true` |
 | `read_out_question` | No | Read each question and its labeled potential answers through Home Assistant TTS. Shows a replay button for the active question. | `false` |
 | `tts_engine` | No | TTS entity used by `tts.speak` when `read_out_question` is enabled. | None |
 | `media_player` | No | Media player that receives TTS audio and is stopped when an answer is selected. | None |
