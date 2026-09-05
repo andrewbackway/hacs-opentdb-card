@@ -15,6 +15,9 @@ The card expects the integration to be installed and configured first. Add it to
 type: custom:opentdb-card
 quiz_id: family_trivia
 title: Evening trivia
+read_out_question: true
+tts_engine: tts.home_assistant_cloud
+media_player: media_player.kitchen_speaker
 ```
 
 ### Configuration
@@ -27,6 +30,26 @@ title: Evening trivia
 | `sound` | No | Play WebAudio sound effects (buzzer, chime, fanfare). | `true` |
 | `shake` | No | Shake the question on a wrong answer. Always disabled when the browser requests reduced motion. | `true` |
 | `show_new_quiz_button` | No | Show the **New quiz** button after a quiz is complete. | `true` |
+| `read_out_question` | No | Read each question and its labeled potential answers through Home Assistant TTS. Shows a replay button for the active question. | `false` |
+| `tts_engine` | No | TTS entity used by `tts.speak` when `read_out_question` is enabled. | None |
+| `media_player` | No | Media player that receives TTS audio and is stopped when an answer is selected. | None |
+
+When narration is enabled, configure both the TTS engine and media player. The
+card uses the Home Assistant `tts.speak` service with this equivalent syntax:
+
+```yaml
+action: tts.speak
+target:
+	entity_id: tts.home_assistant_cloud
+data:
+	media_player_entity_id: media_player.kitchen_speaker
+	message: "Question: What is the capital of France? Answers: A. Paris. B. Rome. C. Berlin. D. Madrid."
+```
+
+Each newly displayed question is read once. The replay button reads the active
+question and all labeled answers again. Selecting an answer stops the
+configured media player before the answer is submitted. Missing or unavailable
+TTS configuration does not prevent normal quiz play.
 
 The card opens an authenticated per-user session through the integration's WebSocket API. The active question, current progress, feedback, score, and completion state are held in the card's JavaScript instance and are never read from shared sensor state. The OpenTDB integration must be installed, loaded, and up to date for these actions to work.
 
