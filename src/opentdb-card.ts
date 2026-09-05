@@ -14,6 +14,7 @@ class OpenTdbCard extends HTMLElement {
   private _hass?: Hass;
   private _config: QuizConfig = {};
   private _session?: QuizSession;
+  private _started = false;
   private _sessionRequest = 0;
   private _submitting = false;
   private _serviceError?: string;
@@ -29,14 +30,18 @@ class OpenTdbCard extends HTMLElement {
   setConfig(config: QuizConfig) {
     const changed = this._config.quiz_id !== config.quiz_id;
     this._config = config;
-    if (changed) void this.startSession();
+    if (changed) {
+      this._sessionRequest++;
+      this._session = undefined;
+      this._sessionError = undefined;
+      this._started = false;
+      this.clearFeedbackTimer();
+    }
     this.render();
   }
 
   set hass(value: Hass) {
-    const changed = this._hass === undefined;
     this._hass = value;
-    if (changed) void this.startSession();
     this.render();
   }
 
@@ -70,6 +75,7 @@ class OpenTdbCard extends HTMLElement {
 
   private async startSession(command = "opentdb/session/start") {
     if (!this._hass || !this._config.quiz_id) return;
+    this._started = true;
     const request = ++this._sessionRequest;
     this._session = undefined;
     this._sessionError = undefined;
@@ -160,6 +166,11 @@ class OpenTdbCard extends HTMLElement {
       return;
     }
     if (!this._session) {
+      if (!this._started) {
+        this.renderShell(`<section class="empty"><strong>Ready when you are</strong><button class="primary" data-action="start">Start Quiz</button></section>`, "state-idle", cardName, "Trivia Quiz", "", "");
+        this.wireEvents([], 0);
+        return;
+      }
       const message = this._sessionError || "Loading your quiz...";
       this.renderShell(`<section class="unavailable"><strong>${this._sessionError ? "Quiz unavailable" : "Loading quiz"}</strong><p>${this.escapeHtml(message)}</p></section>`, this._sessionError ? "state-unavailable" : "state-loading", cardName, "Trivia Quiz", "", "");
       return;

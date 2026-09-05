@@ -4,6 +4,7 @@ class OpenTdbCard extends HTMLElement {
     constructor() {
         super(...arguments);
         this._config = {};
+        this._started = false;
         this._sessionRequest = 0;
         this._submitting = false;
         this._completedCued = false;
@@ -11,15 +12,17 @@ class OpenTdbCard extends HTMLElement {
     setConfig(config) {
         const changed = this._config.quiz_id !== config.quiz_id;
         this._config = config;
-        if (changed)
-            void this.startSession();
+        if (changed) {
+            this._sessionRequest++;
+            this._session = undefined;
+            this._sessionError = undefined;
+            this._started = false;
+            this.clearFeedbackTimer();
+        }
         this.render();
     }
     set hass(value) {
-        const changed = this._hass === undefined;
         this._hass = value;
-        if (changed)
-            void this.startSession();
         this.render();
     }
     disconnectedCallback() {
@@ -49,6 +52,7 @@ class OpenTdbCard extends HTMLElement {
     async startSession(command = "opentdb/session/start") {
         if (!this._hass || !this._config.quiz_id)
             return;
+        this._started = true;
         const request = ++this._sessionRequest;
         this._session = undefined;
         this._sessionError = undefined;
@@ -140,6 +144,11 @@ class OpenTdbCard extends HTMLElement {
             return;
         }
         if (!this._session) {
+            if (!this._started) {
+                this.renderShell(`<section class="empty"><strong>Ready when you are</strong><button class="primary" data-action="start">Start Quiz</button></section>`, "state-idle", cardName, "Trivia Quiz", "", "");
+                this.wireEvents([], 0);
+                return;
+            }
             const message = this._sessionError || "Loading your quiz...";
             this.renderShell(`<section class="unavailable"><strong>${this._sessionError ? "Quiz unavailable" : "Loading quiz"}</strong><p>${this.escapeHtml(message)}</p></section>`, this._sessionError ? "state-unavailable" : "state-loading", cardName, "Trivia Quiz", "", "");
             return;
