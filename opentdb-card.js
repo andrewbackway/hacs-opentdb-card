@@ -224,12 +224,8 @@ class OpenTdbCard extends HTMLElement {
         root.querySelectorAll("[data-action='start']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession(); });
         root.querySelectorAll("[data-action='new']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession("opentdb/session/new"); });
         root.querySelectorAll("[data-action='replay']").forEach((button) => button.onclick = () => { void this.speakQuestion(); });
-<<<<<<< HEAD
         root.querySelectorAll("[data-action='retry']").forEach((button) => button.onclick = () => { this.unlockAudio(); this.retryLast(); });
         root.querySelectorAll("[data-answer-index]").forEach((button) => button.onclick = () => {
-=======
-        root.querySelectorAll("[data-answer-index]").forEach((button) => button.onclick = async () => {
->>>>>>> 64ccb9f688bdc1bfc852157615d0418c005a3211
             if (this._submitting || feedback)
                 return;
             this.unlockAudio();
@@ -414,11 +410,8 @@ OpenTdbCard.STYLES = `
       .result { color: #fff; font-size: 64px; font-weight: 900; line-height: 1; }
       .result-detail, .unavailable p { color: #b9d7d7; font-size: 16px; }
       .service-error { border-radius: 8px; padding: 10px 14px; color: #fff; font-weight: 700; }
-<<<<<<< HEAD
       .retry-link { display: inline; min-height: 0; margin-left: 8px; padding: 0; border: 0; background: none; color: #fff; font: inherit; font-weight: 800; text-decoration: underline; cursor: pointer; }
       .retry-link:hover, .retry-link:focus-visible { background: none; outline: none; }
-=======
->>>>>>> 64ccb9f688bdc1bfc852157615d0418c005a3211
       footer { color: #b9d7d7; font-size: 14px; font-weight: 700; text-align: right; }
       .shake { animation: opentdb-shake 220ms ease-in-out; }
       @keyframes opentdb-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-7px); } 75% { transform: translateX(7px); } }

@@ -33,6 +33,7 @@ $dirty = git -C $RepoRoot status --porcelain
 if ($dirty) { throw "Working tree is not clean:`n$dirty" }
 npm --prefix $RepoRoot version $new --no-git-tag-version
 npm --prefix $RepoRoot run build
+if ($LASTEXITCODE -ne 0) { throw "Build failed with exit code $LASTEXITCODE" }
 if (-not (Test-Path $CardPath)) { throw "Build did not produce required file: $CardPath" }
 git -C $RepoRoot add package.json opentdb-card.js
 $tag = "v$new"
