@@ -2,7 +2,7 @@ type QuizConfig = { quiz_id?: string; title?: string; sound?: boolean; shake?: b
 type QuizFeedback = { correct?: boolean; answer?: string; correct_answer?: string; awarded_points?: number; speed_bonus?: number; streak_bonus?: number };
 type QuizQuestion = { question?: string; answers?: string[]; category?: string; type?: string; difficulty?: string };
 type QuizScore = { answered?: number; correct?: number; incorrect?: number; percentage?: number; points?: number; streak?: number; best_streak?: number };
-type QuizSession = { session_id: string; set_id?: string; quiz_name?: string; question_index: number; total_questions: number; question?: QuizQuestion; feedback?: QuizFeedback; score?: QuizScore; elapsed_seconds?: number; complete?: boolean; leaderboard?: Record<string, any>[] };
+type QuizSession = { session_id: string; set_id?: string; quiz_name?: string; question_index: number; total_questions: number; question?: QuizQuestion; feedback?: QuizFeedback; score?: QuizScore; elapsed_seconds?: number; state?: "idle" | "question" | "feedback" | "complete"; complete?: boolean; leaderboard?: Record<string, any>[] };
 type WebSocketError = { message?: unknown };
 type Hass = { callWS: <T>(message: Record<string, unknown>) => Promise<T>; callService: (domain: string, service: string, serviceData?: Record<string, unknown>, target?: Record<string, unknown>) => Promise<unknown> };
 type HaForm = HTMLElement & { hass?: Hass; data?: QuizConfig; schema?: unknown[] };
@@ -26,6 +26,61 @@ class OpenTdbCard extends HTMLElement {
   private _narratedQuestion?: number;
   private _sessionError?: string;
   private _audioCtx?: AudioContext;
+  private _root?: ShadowRoot;
+  private _body?: HTMLElement;
+
+  private static readonly STYLES = `
+      :host { display: block; min-width: 0; max-width: 100%; color: var(--primary-text-color, #f7fbfc); }
+      ha-card { box-sizing: border-box; display: block; width: 100%; max-width: 100%; overflow: visible; background: var(--card-background-color, #10252b); border: 1px solid rgba(255, 255, 255, .12); border-radius: 8px; }
+      .wrap { box-sizing: border-box; display: grid; grid-template-rows: auto auto auto; width: 100%; min-width: 0; max-width: 100%; gap: var(--opentdb-gap); min-height: 260px; padding: 20px; overflow: visible; background: radial-gradient(circle at 100% 0, rgba(255, 190, 92, .2), transparent 34%), linear-gradient(135deg, #10252b 0%, #123b43 58%, #0c252d 100%); font-family: var(--paper-font-body1_-_font-family, sans-serif); }
+      header { display: flex; align-items: end; justify-content: space-between; gap: 16px; min-width: 0; border-bottom: 1px solid rgba(255, 255, 255, .2); padding-bottom: 12px; }
+      .title-block { min-width: 0; }
+      .card-name { overflow: hidden; color: var(--opentdb-accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+      .quiz-name { display: -webkit-box; overflow: hidden; margin-top: 3px; font-size: 26px; font-weight: 800; line-height: 1.08; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+      .progress { flex: 0 0 auto; color: #b9d7d7; font-size: 14px; font-weight: 700; white-space: nowrap; }
+      main { min-height: 0; }
+      .question-region { display: grid; align-content: start; min-width: 0; gap: var(--opentdb-gap); }
+      .question-copy { min-width: 0; }
+      .question-copy h2 { margin: 0; max-width: 34em; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; font-size: 28px; line-height: 1.18; }
+      .answers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+      button { display: grid; grid-template-columns: 30px minmax(0, 1fr) 24px; align-items: center; min-height: var(--opentdb-answer-min-height); border: 1px solid rgba(255, 255, 255, .24); border-radius: 8px; padding: 12px 14px; color: #f7fbfc; background: rgba(255, 255, 255, .1); font: inherit; font-size: 17px; font-weight: 700; line-height: 1.18; text-align: left; cursor: pointer; }
+      button:hover, button:focus-visible { border-color: var(--opentdb-accent); background: rgba(255, 208, 111, .2); outline: 3px solid rgba(255, 208, 111, .35); outline-offset: 2px; }
+      button:disabled { cursor: default; opacity: .78; }
+      .answer-marker { color: var(--opentdb-accent); font-size: 14px; font-weight: 900; }
+      .answer-label { min-width: 0; overflow-wrap: anywhere; }
+      .answer-icon { justify-self: end; opacity: 0; }
+      .answer-selected .answer-icon, .answer-revealed-correct .answer-icon { opacity: 1; }
+      .answer-correct { border-color: #78e0b0; background: rgba(34, 125, 112, .72); }
+      .answer-incorrect { border-color: #ff9a7f; background: rgba(166, 69, 69, .78); }
+      .answer-revealed-correct { border-color: #78e0b0; background: rgba(34, 125, 112, .5); }
+      .primary { justify-self: center; grid-template-columns: 1fr; min-width: min(260px, 100%); background: var(--opentdb-primary); border-color: #ff9a7f; text-align: center; }
+      .primary:hover, .primary:focus-visible { background: #ff866d; }
+      .feedback { display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; padding: 10px 14px; color: #fff; font-size: 18px; font-weight: 800; text-align: center; }
+      .feedback.correct { background: var(--opentdb-correct); }
+      .feedback.incorrect, .service-error { background: var(--opentdb-incorrect); }
+      .complete, .empty, .unavailable { display: grid; justify-items: center; align-content: center; gap: 10px; min-height: 0; padding: 18px 0; text-align: center; }
+      .complete strong, .empty strong { color: var(--opentdb-accent); font-size: 22px; }
+      .result { color: #fff; font-size: 64px; font-weight: 900; line-height: 1; }
+      .result-detail, .unavailable p { color: #b9d7d7; font-size: 16px; }
+      .service-error { border-radius: 8px; padding: 10px 14px; color: #fff; font-weight: 700; }
+      footer { color: #b9d7d7; font-size: 14px; font-weight: 700; text-align: right; }
+      .shake { animation: opentdb-shake 220ms ease-in-out; }
+      @keyframes opentdb-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-7px); } 75% { transform: translateX(7px); } }
+      .leaderboard { display: grid; gap: 6px; width: min(440px, 100%); margin: 4px auto 0; padding: 0; list-style: none; }
+      .leaderboard li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 12px; border-radius: 8px; background: rgba(255, 255, 255, .08); font-size: 15px; font-weight: 700; }
+      .lb-rank { color: var(--opentdb-accent); font-weight: 900; }
+      .lb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+      .lb-points { color: #b9d7d7; white-space: nowrap; }
+      .question-heading { display: flex; align-items: start; gap: 10px; }
+      .question-heading h2 { flex: 1 1 auto; min-width: 0; }
+      .replay { flex: 0 0 auto; grid-template-columns: 1fr; min-width: 44px; min-height: 44px; padding: 8px; text-align: center; }
+      .complete { overflow: auto; }
+      .feedback.correct { animation: opentdb-pop 260ms ease-out; }
+      @keyframes opentdb-pop { 0% { transform: scale(.9); } 50% { transform: scale(1.06); } 100% { transform: scale(1); } }
+      :host { --opentdb-gap: 12px; --opentdb-answer-min-height: 56px; --opentdb-accent: #ffd06f; --opentdb-primary: #ef715d; --opentdb-correct: #227d70; --opentdb-incorrect: #a64545; }
+      @media (max-width: 560px) { .answers { grid-template-columns: 1fr; } header { align-items: start; flex-wrap: wrap; } .progress { flex-basis: 100%; text-align: right; } .question-copy h2 { font-size: 24px; } }
+      @media (prefers-reduced-motion: reduce) { .shake, .feedback.correct { animation: none; } }
+    `;
 
   setConfig(config: QuizConfig) {
     const changed = this._config.quiz_id !== config.quiz_id;
@@ -41,8 +96,9 @@ class OpenTdbCard extends HTMLElement {
   }
 
   set hass(value: Hass) {
+    const firstAssignment = this._hass === undefined;
     this._hass = value;
-    this.render();
+    if (firstAssignment) this.render();
   }
 
   disconnectedCallback() {
@@ -95,63 +151,23 @@ class OpenTdbCard extends HTMLElement {
     }
   }
 
+  private ensureBody(): HTMLElement {
+    if (!this._root) {
+      this._root = this.attachShadow({ mode: "open" });
+      const style = document.createElement("style");
+      style.textContent = OpenTdbCard.STYLES;
+      this._body = document.createElement("div");
+      this._root.append(style, this._body);
+    }
+    return this._body!;
+  }
+
   private renderShell(content: string, stateClass: string, title: string, quizName: string, progress = "", footer = "") {
     const safeTitle = this.escapeHtml(title);
     const safeQuizName = this.escapeHtml(quizName);
     const safeProgress = this.escapeHtml(progress);
     const safeFooter = this.escapeHtml(footer);
-    this.innerHTML = `<style>
-      :host { display: block; min-width: 0; max-width: 100%; color: var(--primary-text-color, #f7fbfc); }
-      ha-card { box-sizing: border-box; display: block; width: 100%; max-width: 100%; overflow: visible; background: var(--card-background-color, #10252b); border: 1px solid rgba(255, 255, 255, .12); border-radius: 8px; }
-      .wrap { box-sizing: border-box; display: grid; grid-template-rows: auto auto auto; width: 100%; min-width: 0; max-width: 100%; gap: var(--opentdb-gap); min-height: 260px; padding: 20px; overflow: visible; background: radial-gradient(circle at 100% 0, rgba(255, 190, 92, .2), transparent 34%), linear-gradient(135deg, #10252b 0%, #123b43 58%, #0c252d 100%); font-family: var(--paper-font-body1_-_font-family, sans-serif); }
-      header { display: flex; align-items: end; justify-content: space-between; gap: 16px; min-width: 0; border-bottom: 1px solid rgba(255, 255, 255, .2); padding-bottom: 12px; }
-      .title-block { min-width: 0; }
-      .card-name { overflow: hidden; color: var(--opentdb-accent); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
-      .quiz-name { display: -webkit-box; overflow: hidden; margin-top: 3px; font-size: 26px; font-weight: 800; line-height: 1.08; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
-      .progress { flex: 0 0 auto; color: #b9d7d7; font-size: 14px; font-weight: 700; white-space: nowrap; }
-      main { min-height: 0; }
-      .question-region { display: grid; align-content: start; min-width: 0; gap: var(--opentdb-gap); }
-      .question-copy { min-width: 0; }
-      .question-copy h2 { margin: 0; max-width: 34em; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; font-size: 28px; line-height: 1.18; }
-      .answers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-      button { display: grid; grid-template-columns: 30px minmax(0, 1fr) 24px; align-items: center; min-height: var(--opentdb-answer-min-height); border: 1px solid rgba(255, 255, 255, .24); border-radius: 8px; padding: 12px 14px; color: #f7fbfc; background: rgba(255, 255, 255, .1); font: inherit; font-size: 17px; font-weight: 700; line-height: 1.18; text-align: left; cursor: pointer; }
-      button:hover, button:focus-visible { border-color: var(--opentdb-accent); background: rgba(255, 208, 111, .2); outline: 3px solid rgba(255, 208, 111, .35); outline-offset: 2px; }
-      button:disabled { cursor: default; opacity: .78; }
-      .answer-marker { color: var(--opentdb-accent); font-size: 14px; font-weight: 900; }
-      .answer-label { min-width: 0; overflow-wrap: anywhere; }
-      .answer-icon { justify-self: end; opacity: 0; }
-      .answer-selected .answer-icon, .answer-revealed-correct .answer-icon { opacity: 1; }
-      .answer-correct { border-color: #78e0b0; background: rgba(34, 125, 112, .72); }
-      .answer-incorrect { border-color: #ff9a7f; background: rgba(166, 69, 69, .78); }
-      .answer-revealed-correct { border-color: #78e0b0; background: rgba(34, 125, 112, .5); }
-      .primary { justify-self: center; grid-template-columns: 1fr; min-width: min(260px, 100%); background: var(--opentdb-primary); border-color: #ff9a7f; text-align: center; }
-      .primary:hover, .primary:focus-visible { background: #ff866d; }
-      .feedback { display: flex; align-items: center; justify-content: center; gap: 8px; border-radius: 8px; padding: 10px 14px; color: #fff; font-size: 18px; font-weight: 800; text-align: center; }
-      .feedback.correct { background: var(--opentdb-correct); }
-      .feedback.incorrect, .service-error { background: var(--opentdb-incorrect); }
-      .complete, .empty, .unavailable { display: grid; justify-items: center; align-content: center; gap: 10px; min-height: 0; padding: 18px 0; text-align: center; }
-      .complete strong, .empty strong { color: var(--opentdb-accent); font-size: 22px; }
-      .result { color: #fff; font-size: 64px; font-weight: 900; line-height: 1; }
-      .result-detail, .unavailable p { color: #b9d7d7; font-size: 16px; }
-      .service-error { border-radius: 8px; padding: 10px 14px; color: #fff; font-weight: 700; }
-      footer { color: #b9d7d7; font-size: 14px; font-weight: 700; text-align: right; }
-      .shake { animation: opentdb-shake 220ms ease-in-out; }
-      @keyframes opentdb-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-7px); } 75% { transform: translateX(7px); } }
-      .leaderboard { display: grid; gap: 6px; width: min(440px, 100%); margin: 4px auto 0; padding: 0; list-style: none; }
-      .leaderboard li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 7px 12px; border-radius: 8px; background: rgba(255, 255, 255, .08); font-size: 15px; font-weight: 700; }
-      .lb-rank { color: var(--opentdb-accent); font-weight: 900; }
-      .lb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-      .lb-points { color: #b9d7d7; white-space: nowrap; }
-      .question-heading { display: flex; align-items: start; gap: 10px; }
-      .question-heading h2 { flex: 1 1 auto; min-width: 0; }
-      .replay { flex: 0 0 auto; grid-template-columns: 1fr; min-width: 44px; min-height: 44px; padding: 8px; text-align: center; }
-      .complete { overflow: auto; }
-      .feedback.correct { animation: opentdb-pop 260ms ease-out; }
-      @keyframes opentdb-pop { 0% { transform: scale(.9); } 50% { transform: scale(1.06); } 100% { transform: scale(1); } }
-      :host { --opentdb-gap: 12px; --opentdb-answer-min-height: 56px; --opentdb-accent: #ffd06f; --opentdb-primary: #ef715d; --opentdb-correct: #227d70; --opentdb-incorrect: #a64545; }
-      @media (max-width: 560px) { .answers { grid-template-columns: 1fr; } header { align-items: start; flex-wrap: wrap; } .progress { flex-basis: 100%; text-align: right; } .question-copy h2 { font-size: 24px; } }
-      @media (prefers-reduced-motion: reduce) { .shake, .feedback.correct { animation: none; } }
-    </style><ha-card><div class="wrap ${stateClass}">
+    this.ensureBody().innerHTML = `<ha-card><div class="wrap ${stateClass}">
       <header><div class="title-block"><div class="card-name">${safeTitle}</div><div class="quiz-name">${safeQuizName}</div></div>${safeProgress ? `<div class="progress">${safeProgress}</div>` : ""}</header>
       <main>${content}</main>
       <footer>${safeFooter}</footer>
@@ -167,7 +183,7 @@ class OpenTdbCard extends HTMLElement {
     }
     if (!this._session) {
       if (!this._started) {
-        this.renderShell(`<section class="empty"><strong>Ready when you are</strong><button class="primary" data-action="start">Start Quiz</button></section>`, "state-idle", cardName, "Trivia Quiz", "", "");
+        this.renderShell(`<section class="empty"><strong>Ready when you are</strong><button class="primary" data-action="start">Start quiz</button></section>`, "state-idle", cardName, "Trivia Quiz", "", "");
         this.wireEvents([], 0);
         return;
       }
@@ -187,7 +203,7 @@ class OpenTdbCard extends HTMLElement {
     const elapsed = Number(session.elapsed_seconds || 0);
     const points = Number(score.points || 0);
     const streak = Number(score.streak || 0);
-    const quizState = session.complete ? "complete" : feedback ? "feedback" : question.question ? "question" : "idle";
+    const quizState = session.state ?? (session.complete ? "complete" : feedback ? "feedback" : question.question ? "question" : "idle");
 
     if (!feedback && !this._submitting) {
       this.clearFeedbackTimer();
@@ -209,7 +225,7 @@ class OpenTdbCard extends HTMLElement {
     this.renderShell(content, feedback ? "state-feedback" : quizState === "idle" ? "state-idle" : quizState === "complete" ? "state-complete" : "state-question", cardName, quizName, progress, footer);
     this.wireEvents(choices, questionIndex, feedback);
 
-    if (feedback && !session.complete && this._feedbackQuestion !== questionIndex && Number.isFinite(questionIndex)) {
+    if (feedback && quizState !== "complete" && this._feedbackQuestion !== questionIndex && Number.isFinite(questionIndex)) {
       this._submitting = false;
       this.clearFeedbackTimer();
       this._feedbackQuestion = questionIndex;
@@ -271,17 +287,19 @@ class OpenTdbCard extends HTMLElement {
     const board = leaderboard.length
       ? `<ol class="leaderboard" aria-label="Leaderboard">${leaderboard.slice(0, 5).map((row, index) => `<li><span class="lb-rank">${index + 1}</span><span class="lb-name">${this.escapeHtml(row.name ?? "Player")}</span><span class="lb-points">${this.escapeHtml(row.points_today ?? 0)} pts</span></li>`).join("")}</ol>`
       : "";
-    const newQuizButton = this._config.show_new_quiz_button !== false
+    const newQuizButton = this._config.show_new_quiz_button === true
       ? `<button class="primary" data-action="new">New quiz</button>`
-      : "";
+      : `<div class="result-detail">Come back tomorrow for a new quiz</div>`;
     return `<section class="complete"><strong>Quiz complete</strong><div class="result">${this.escapeHtml(score.percentage || 0)}%</div><div class="result-detail">${this.escapeHtml(score.correct || 0)} of ${this.escapeHtml(score.answered || 0)} correct \u00b7 ${this.escapeHtml(score.points || 0)} pts \u00b7 ${this.escapeHtml(elapsed)}s</div>${board}${newQuizButton}</section>`;
   }
 
   private wireEvents(choices: string[], questionIndex: number, feedback?: QuizFeedback) {
-    this.querySelectorAll<HTMLElement>("[data-action='start']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession(); });
-    this.querySelectorAll<HTMLElement>("[data-action='new']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession("opentdb/session/new"); });
-    this.querySelectorAll<HTMLElement>("[data-action='replay']").forEach((button) => button.onclick = () => { void this.speakQuestion(); });
-    this.querySelectorAll<HTMLButtonElement>("[data-answer-index]").forEach((button) => button.onclick = async () => {
+    const root = this._body;
+    if (!root) return;
+    root.querySelectorAll<HTMLElement>("[data-action='start']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession(); });
+    root.querySelectorAll<HTMLElement>("[data-action='new']").forEach((button) => button.onclick = () => { this.unlockAudio(); void this.startSession("opentdb/session/new"); });
+    root.querySelectorAll<HTMLElement>("[data-action='replay']").forEach((button) => button.onclick = () => { void this.speakQuestion(); });
+    root.querySelectorAll<HTMLButtonElement>("[data-answer-index]").forEach((button) => button.onclick = async () => {
       if (this._submitting || feedback) return;
       this.unlockAudio();
       const answerIndex = Number(button.dataset.answerIndex);
